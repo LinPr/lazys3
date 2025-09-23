@@ -232,11 +232,7 @@ func (S3Store *S3Store) ListObjectsWithPagination(ctx context.Context, bucket, k
 		}
 
 		// 前缀
-		for _, prefix := range page.CommonPrefixes {
-			log.Printf("Prefix: %s\n", *prefix.Prefix)
-			prefixes = append(prefixes, prefix)
-		}
-
+		prefixes = append(prefixes, page.CommonPrefixes...)
 		objects = append(objects, page.Contents...)
 	}
 	log.Printf("Total objects found: %d\n", len(objects))

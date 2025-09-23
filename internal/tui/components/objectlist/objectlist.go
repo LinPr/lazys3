@@ -3,8 +3,6 @@ package objectlist
 import (
 	// "github.com/LinPr/lazys3/internal/tui/components/style"
 
-	"log"
-
 	"github.com/LinPr/lazys3/internal/tui/components/style"
 	"github.com/charmbracelet/bubbles/v2/list"
 	tea "github.com/charmbracelet/bubbletea/v2"
@@ -34,7 +32,7 @@ func (m Model) Init() tea.Cmd {
 	return nil
 }
 
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	newObjectListModel, cmd := m.objectlist.Update(msg)
 	m.objectlist = newObjectListModel
 	return m, cmd
@@ -48,13 +46,13 @@ func (m Model) View() string {
 }
 
 func (m *Model) SetTitle(title string) {
-	m.Title = title
+	// m.Title = title
+	m.objectlist.Title = title
 }
 
 func (m *Model) SetObjects(items []Object) {
 	listItems := make([]list.Item, 0)
 	for _, o := range items {
-		log.Printf("-------------- o.name: %v\n", o.name)
 		listItems = append(listItems, o)
 	}
 	m.objectlist.SetItems(listItems)

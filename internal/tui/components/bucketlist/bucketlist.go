@@ -27,12 +27,12 @@ func NewModel() Model {
 	}
 }
 
-func (m Model) Init() tea.Cmd {
+func (m *Model) Init() tea.Cmd {
 
 	return nil
 }
 
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	newBucketListModel, cmd := m.bucketlist.Update(msg)
 	m.bucketlist = newBucketListModel
 	return m, cmd

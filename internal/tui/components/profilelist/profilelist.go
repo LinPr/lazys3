@@ -40,9 +40,9 @@ func (m Model) Init() tea.Cmd {
 	return nil
 }
 
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	newBucketListModel, cmd := m.profileList.Update(msg)
-	m.profileList = newBucketListModel
+func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
+	newProfileListModel, cmd := m.profileList.Update(msg)
+	m.profileList = newProfileListModel
 	return m, cmd
 }
 

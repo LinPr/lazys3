@@ -2,9 +2,7 @@ package objectlist
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"log"
 	"strings"
 
 	s3store "github.com/LinPr/lazys3/internal/storage/s3"
@@ -76,14 +74,12 @@ func listObjects(cli *s3store.S3Store, bucket, key string) ([]Object, error) {
 
 	objectList := make([]Object, 0, len(prefixes)+len(objs))
 	for _, prefix := range prefixes {
-		log.Println("-------------prefix:", *prefix.Prefix)
+		// log.Println("-------------prefix:", *prefix.Prefix)
 		objectList = append(objectList, Object{name: *prefix.Prefix})
 	}
 	for _, obj := range objs {
-		log.Println("-------------object:", *obj.Key)
+		// log.Println("-------------object:", *obj.Key)
 		objectList = append(objectList, Object{name: *obj.Key})
 	}
-	j, _ := json.MarshalIndent(objectList, "", "  ")
-	log.Println("-------------objectList:", string(j))
 	return objectList, nil
 }

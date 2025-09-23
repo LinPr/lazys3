@@ -1,6 +1,9 @@
 package preview
 
 import (
+	"log"
+	"reflect"
+
 	"github.com/charmbracelet/bubbles/v2/list"
 	tea "github.com/charmbracelet/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss/v2"
@@ -32,10 +35,11 @@ func NewPreviewModel() PreviewModel {
 
 // SetContent 设置预览内容
 func (pm *PreviewModel) SetContent(item PreviewItem) {
+	// TODO: content 可能是个值
+	log.Printf("reflect.TypeOf(item): %v\n", reflect.TypeOf(item))
 	if item != nil {
 		pm.content = item.GetPreviewContent()
 	} else {
-
 		pm.title = "Preview"
 		pm.content = "No item selected"
 	}

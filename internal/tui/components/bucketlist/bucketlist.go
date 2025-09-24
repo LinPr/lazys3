@@ -2,6 +2,8 @@ package bucketlist
 
 import (
 	// "github.com/LinPr/lazys3/internal/tui/components/style"
+	"fmt"
+
 	"github.com/LinPr/lazys3/internal/tui/components/style"
 	"github.com/charmbracelet/bubbles/v2/list"
 	tea "github.com/charmbracelet/bubbletea/v2"
@@ -9,6 +11,7 @@ import (
 
 type Model struct {
 	Title      string
+	Option     *Option
 	bucketlist list.Model
 }
 
@@ -33,8 +36,12 @@ func (m *Model) Init() tea.Cmd {
 }
 
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
-	newBucketListModel, cmd := m.bucketlist.Update(msg)
-	m.bucketlist = newBucketListModel
+
+	var cmd tea.Cmd
+
+	m.bucketlist, cmd = m.bucketlist.Update(msg)
+
+	m.SetTitle(fmt.Sprintf("S3 Buckets (%s)", m.Option.Profile))
 	return m, cmd
 }
 
@@ -47,6 +54,10 @@ func (m Model) View() string {
 
 func (m *Model) SetTitle(title string) {
 	m.Title = title
+}
+
+func (m *Model) SetOption(opt *Option) {
+	m.Option = opt
 }
 
 func (m *Model) SetBuckets(items []Bucket) {

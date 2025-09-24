@@ -7,6 +7,7 @@ import (
 
 	s3store "github.com/LinPr/lazys3/internal/storage/s3"
 	"github.com/LinPr/lazys3/internal/storage/uri"
+	tea "github.com/charmbracelet/bubbletea/v2"
 )
 
 type Bucket struct {
@@ -45,36 +46,42 @@ type Option struct {
 	EndpointUrl string
 }
 
-func FetchBucketList(o Option) ([]Bucket, error) {
+type FetchBucketListResultMsg struct {
+	Buckets []Bucket
+	Err     error
+}
 
-	opt := s3store.S3Option{
-		UsePathStyle: o.PathStyle,
-		Region:       o.Region,
-		Profile:      o.Profile,
-		// Endpoint:     o.EndpointUrl,
-		// NoVerifySSL: o.NoVerifySSL,
-		// DryRun:      o.DryRun,
-	}
+func FetchBucketListCmd(o *Option) tea.Cmd {
+	return func() tea.Msg {
+		opt := s3store.S3Option{
+			UsePathStyle: o.PathStyle,
+			Region:       o.Region,
+			Profile:      o.Profile,
+			// Endpoint:     o.EndpointUrl,
+			// NoVerifySSL: o.NoVerifySSL,
+			// DryRun:      o.DryRun,
+		}
 
-	cli, err := s3store.NewS3Client(context.TODO(), opt)
-	if err != nil {
-		return nil, err
-	}
+		cli, err := s3store.NewS3Client(context.TODO(), opt)
+		if err != nil {
+			return FetchBucketListResultMsg{Err: err}
+		}
 
-	if o.S3Uri == "" {
-		return listBuckets(cli)
-	}
+		if o.S3Uri == "" {
+			buckets, err := listBuckets(cli)
+			return FetchBucketListResultMsg{Buckets: buckets, Err: err}
+		}
 
-	parsedUri, err := uri.ParseS3Uri(o.S3Uri)
-	if err != nil {
-		return nil, err
+		parsedUri, err := uri.ParseS3Uri(o.S3Uri)
+		if err != nil {
+			return FetchBucketListResultMsg{Err: err}
+		}
+		if parsedUri.GetBucket() == "" {
+			buckets, err := listBuckets(cli)
+			return FetchBucketListResultMsg{Buckets: buckets, Err: err}
+		}
+		return nil
 	}
-	if parsedUri.GetBucket() == "" {
-		return listBuckets(cli)
-	}
-
-	return nil, nil
-	// return listObjects(cli, parsedUri.GetBucket(), parsedUri.GetKey())
 }
 
 func listBuckets(cli *s3store.S3Store) ([]Bucket, error) {

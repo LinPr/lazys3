@@ -3,10 +3,12 @@ package objectlist
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 
 	s3store "github.com/LinPr/lazys3/internal/storage/s3"
 	"github.com/LinPr/lazys3/internal/storage/uri"
+	tea "github.com/charmbracelet/bubbletea/v2"
 )
 
 type Object struct {
@@ -35,35 +37,50 @@ func (i Object) GetPreviewContent() string {
 	return content.String()
 }
 
-func FetchObjectList(o Option) ([]Object, error) {
-	opt := s3store.S3Option{
-		UsePathStyle: o.PathStyle,
-		Region:       o.Region,
-		Profile:      o.Profile,
-		// Endpoint:     o.EndpointUrl,
-		// NoVerifySSL: o.NoVerifySSL,
-		// DryRun:      o.DryRun,
-	}
+type FetchObjectListResultMsg struct {
+	Objects []Object
+	Err     error
+}
 
-	cli, err := s3store.NewS3Client(context.TODO(), opt)
-	if err != nil {
-		return nil, err
-	}
+func FetchObjectListCmd(o Option) tea.Cmd {
+	log.Println("111111111111111111")
+	return func() tea.Msg {
+		log.Println("22222222222222222")
+		opt := s3store.S3Option{
+			UsePathStyle: o.PathStyle,
+			Region:       o.Region,
+			Profile:      o.Profile,
+			// Endpoint:     o.EndpointUrl,
+			// NoVerifySSL: o.NoVerifySSL,
+			// DryRun:      o.DryRun,
+		}
 
-	if o.S3Uri == "" {
-		// return listBuckets(cli)
-		return nil, fmt.Errorf("S3Uri is empty")
-	}
+		cli, err := s3store.NewS3Client(context.TODO(), opt)
+		if err != nil {
+			return FetchObjectListResultMsg{Err: err}
+		}
 
-	parsedUri, err := uri.ParseS3Uri(o.S3Uri)
-	if err != nil {
-		return nil, err
+		if o.S3Uri == "" {
+			return FetchObjectListResultMsg{Err: fmt.Errorf("s3uri is empty")}
+		}
+
+		parsedUri, err := uri.ParseS3Uri(o.S3Uri)
+		if err != nil {
+			return FetchObjectListResultMsg{Err: err}
+		}
+		if parsedUri.GetBucket() == "" {
+			return FetchObjectListResultMsg{Err: fmt.Errorf("bucket is empty")}
+		}
+		objects, err := listObjects(cli, parsedUri.GetBucket(), parsedUri.GetKey())
+		if err != nil {
+			return FetchObjectListResultMsg{Err: err}
+		}
+		if len(objects) == 0 {
+			return FetchObjectListResultMsg{Err: fmt.Errorf("no object found")}
+		}
+		log.Printf("-----objects: %#v\n", objects)
+		return FetchObjectListResultMsg{Objects: objects, Err: nil}
 	}
-	if parsedUri.GetBucket() == "" {
-		// return listBuckets(cli)
-		return nil, fmt.Errorf("S3Uri is empty")
-	}
-	return listObjects(cli, parsedUri.GetBucket(), parsedUri.GetKey())
 }
 
 func listObjects(cli *s3store.S3Store, bucket, key string) ([]Object, error) {

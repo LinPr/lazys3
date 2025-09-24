@@ -38,7 +38,7 @@ func (pm *PreviewModel) SetContent(item PreviewItem) {
 	// TODO: content 可能是个值
 	log.Printf("reflect.TypeOf(item): %v\n", reflect.TypeOf(item))
 	if item != nil {
-		pm.content = item.GetPreviewContent()
+		// pm.content = item.GetPreviewContent()
 	} else {
 		pm.title = "Preview"
 		pm.content = "No item selected"

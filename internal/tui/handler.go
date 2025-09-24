@@ -37,27 +37,21 @@ func (m *Model) initComponentsSize(msg tea.WindowSizeMsg) {
 
 }
 
-func (m *Model) handleProfileSelect() tea.Cmd {
-	var cmd []tea.Cmd
-	// 获取险种的 buckets 信息
+func (m *Model) handleProfileSelect(msg tea.Msg) tea.Cmd {
+
+	// processCmd := func() tea.Msg
 	if selectedItem := m.profileList.GetSelectedProfile(); selectedItem != nil {
 		selectedProfile := selectedItem.Title()
 		m.selectedProfile = selectedProfile
 		// 获取对应的 buckets
-		opt := bucketlist.Option{
+		opt := &bucketlist.Option{
 			Profile: selectedProfile,
 		}
-		buckets, err := bucketlist.FetchBucketList(opt)
-		if err != nil {
-			// 处理错误，例如显示错误消息
-			log.Println("Error fetching bucket list:", err)
-		}
-		log.Println("222222 buckets:", buckets)
-		m.bucketList.SetBuckets(buckets)
-		m.bucketList.SetTitle(fmt.Sprintf("S3 Buckets (%s)", selectedProfile))
+		m.bucketList.SetOption(opt)
+		return bucketlist.FetchBucketListCmd(opt)
 	}
 
-	return tea.Batch(cmd...)
+	return nil
 }
 
 func (m *Model) handleBucketSelect() tea.Cmd {
@@ -76,19 +70,9 @@ func (m *Model) handleBucketSelect() tea.Cmd {
 			S3Uri:   s3uri,
 			Profile: m.selectedProfile,
 		}
-		objects, err := objectlist.FetchObjectList(opt)
-		if err != nil {
-			// 处理错误，例如显示错误消息
-			log.Println("Error fetching object list:", err)
-			return nil
-		}
-
-		if len(objects) == 0 {
-			return nil
-		}
-
-		m.objectlist.SetObjects(objects)
 		m.objectlist.SetTitle(s3uri)
+		cmd := objectlist.FetchObjectListCmd(opt)
+		cmds = append(cmds, cmd)
 	}
 
 	return tea.Batch(cmds...)
@@ -113,15 +97,11 @@ func (m *Model) handleObjectSelect() tea.Cmd {
 			S3Uri:   s3uri,
 			Profile: m.selectedProfile,
 		}
-		objects, err := objectlist.FetchObjectList(opt)
-		if err != nil {
-			// 处理错误，例如显示错误消息
-			log.Println("Error fetching object list:", err)
-		}
 
-		m.objectlist.SetObjects(objects)
 		m.objectlist.SetTitle(s3uri)
-
+		log.Println("----xx--- handleObjectSelect s3uri:", s3uri)
+		cmd := objectlist.FetchObjectListCmd(opt)
+		cmds = append(cmds, cmd)
 	}
 
 	return tea.Batch(cmds...)
@@ -140,6 +120,7 @@ func (m *Model) handleObjectUnSelect() tea.Cmd {
 		// 砍掉最后一个 / 后面的部分
 
 		parts := strings.Split(strings.TrimSuffix(selectedObject, "/"), "/")
+		log.Println("------ parts:", parts)
 
 		if len(parts) <= 1 {
 			m.selectedObject = ""
@@ -150,7 +131,6 @@ func (m *Model) handleObjectUnSelect() tea.Cmd {
 			s3uri = fmt.Sprintf("s3://%s", m.selectedBucket)
 			log.Println("333333: m.selectedObject:", m.selectedObject)
 		} else {
-
 			m.selectedObject = strings.Join(parts[:len(parts)-2], "/")
 			log.Println("222222: m.selectedObject:", m.selectedObject)
 			// m.selectedObject = strings.Join(parts[:len(parts)-1], "/")
@@ -163,14 +143,9 @@ func (m *Model) handleObjectUnSelect() tea.Cmd {
 			S3Uri:   s3uri,
 			Profile: m.selectedProfile,
 		}
-		objects, err := objectlist.FetchObjectList(opt)
-		if err != nil {
-			// 处理错误，例如显示错误消息
-			log.Println("Error fetching object list:", err)
-		}
+		cmd := objectlist.FetchObjectListCmd(opt)
+		cmds = append(cmds, cmd)
 
-		m.objectlist.SetObjects(objects)
-		m.objectlist.SetTitle(s3uri)
 		// refresh the new selected object
 		// m.selectedObject = selectedObject
 	}
@@ -178,12 +153,13 @@ func (m *Model) handleObjectUnSelect() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-func (m *Model) handleForward() (tea.Model, tea.Cmd) {
+func (m *Model) handleForward(msg tea.Msg) tea.Cmd {
 	var cmds []tea.Cmd
 
 	switch m.state {
 	case state.ActiveProfileList:
-		m.handleProfileSelect()
+		cmd := m.handleProfileSelect(msg)
+		cmds = append(cmds, cmd)
 
 		// switch to bucket list if a profile is selected
 		if m.profileList.GetSelectedProfile() != nil {
@@ -196,7 +172,8 @@ func (m *Model) handleForward() (tea.Model, tea.Cmd) {
 		}
 
 	case state.ActiveBucketList:
-		m.handleBucketSelect()
+		cmd := m.handleBucketSelect()
+		cmds = append(cmds, cmd)
 
 		// switch to object list if a bucket is selected
 		if m.bucketList.GetSelectedBucket() != nil {
@@ -209,7 +186,8 @@ func (m *Model) handleForward() (tea.Model, tea.Cmd) {
 		}
 
 	case state.ActiveObjectList:
-		m.handleObjectSelect()
+		cmd := m.handleObjectSelect()
+		cmds = append(cmds, cmd)
 
 		// switch to object list if a bucket is selected
 		if m.objectlist.GetSelectedObject() != nil {
@@ -222,18 +200,20 @@ func (m *Model) handleForward() (tea.Model, tea.Cmd) {
 		}
 	}
 
-	return m, tea.Batch(cmds...)
+	return tea.Batch(cmds...)
 }
 
-func (m *Model) handleBackward() (tea.Model, tea.Cmd) {
-	switch m.state {
+func (m *Model) handleBackward() tea.Cmd {
+	var cmds []tea.Cmd
 
+	switch m.state {
 	case state.ActiveObjectList:
-		m.handleObjectUnSelect()
+		cmd := m.handleObjectUnSelect()
+		cmds = append(cmds, cmd)
+
 		if m.selectedObject == "" {
 			m.state = state.ActiveBucketList
 		}
-
 	case state.ActiveBucketList:
 		// m.handleBucketSelect()
 		m.state = state.ActiveProfileList
@@ -241,7 +221,8 @@ func (m *Model) handleBackward() (tea.Model, tea.Cmd) {
 	case state.ActiveProfileList:
 		// m.handleProfileSelect()
 	}
-	return m, nil
+
+	return tea.Batch(cmds...)
 }
 
 func (m *Model) handlePreviewToggle() (tea.Model, tea.Cmd) {

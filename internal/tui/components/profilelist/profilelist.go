@@ -1,6 +1,8 @@
 package profilelist
 
 import (
+	"log"
+
 	"github.com/LinPr/lazys3/internal/tui/components/style"
 	"github.com/charmbracelet/bubbles/v2/list"
 	tea "github.com/charmbracelet/bubbletea/v2"
@@ -18,12 +20,7 @@ type Model struct {
 }
 
 func NewModel() Model {
-	awsProfileList, _ := ReadAwsConfigProfileList()
 	items := make([]list.Item, 0)
-	for _, profile := range awsProfileList {
-		items = append(items, profile)
-	}
-
 	delegate := list.NewDefaultDelegate()
 	// delegate.Styles.NormalTitle = delegate.Styles.NormalTitle.MaxHeight(1)
 	// delegate.Styles.NormalDesc = delegate.Styles.NormalDesc.MaxHeight(1)
@@ -37,10 +34,25 @@ func NewModel() Model {
 }
 
 func (m Model) Init() tea.Cmd {
-	return nil
+	return ReadAwsConfigProfileListCmd()
 }
 
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
+	var cmd tea.Cmd
+	switch msg := msg.(type) {
+	case ReadAwsConfigResult:
+		if msg.Err != nil {
+			log.Println("read aws config error:", msg.Err)
+		}
+		items := make([]list.Item, 0)
+		for _, profile := range msg.Profiles {
+			items = append(items, profile)
+		}
+		m.profileList.SetItems(items)
+		m.SetTitle("AWS Profiles")
+		return m, nil
+	}
+
 	newProfileListModel, cmd := m.profileList.Update(msg)
 	m.profileList = newProfileListModel
 	return m, cmd
@@ -72,4 +84,8 @@ func (m *Model) SetSize(width, height int) {
 
 func (m *Model) GetSize() (width, height int) {
 	return m.profileList.Width(), m.profileList.Height()
+}
+
+func (m *Model) SetTitle(title string) {
+	m.profileList.Title = title
 }

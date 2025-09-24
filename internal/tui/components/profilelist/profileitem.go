@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/config"
+	tea "github.com/charmbracelet/bubbletea/v2"
 	"github.com/goccy/go-yaml"
 )
 
@@ -26,37 +27,28 @@ func (b Profile) GetPreviewContent() string {
 	// return "fjdakfda"
 }
 
-func ReadAwsConfigProfileList() ([]Profile, error) {
-	// TODO: 这里应该参考 AWS SDK 中的文件解析逻辑
-	configs, err := LoadAwsConfig()
-	if err != nil {
-		return nil, err
-	}
-	var profiles []Profile
-	for _, config := range configs {
-		profiles = append(profiles, Profile{
-			name:        config.Profile,
-			EndpointUrl: config.BaseEndpoint,
-			config:      &config,
-		})
-	}
+type ReadAwsConfigResult struct {
+	Profiles []Profile
+	Err      error
+}
 
-	// test
-	// for _, config := range configs {
-	// 	profiles = append(profiles, Profile{
-	// 		name:        config.Profile,
-	// 		EndpointUrl: config.BaseEndpoint,
-	// 		config:      &config,
-	// 	})
-	// }
-	// for _, config := range configs {
-	// 	profiles = append(profiles, Profile{
-	// 		name:        config.Profile,
-	// 		EndpointUrl: config.BaseEndpoint,
-	// 		config:      &config,
-	// 	})
-	// }
-	return profiles, nil
+func ReadAwsConfigProfileListCmd() tea.Cmd {
+	return func() tea.Msg {
+		configs, err := LoadAwsConfig()
+		if err != nil {
+			return ReadAwsConfigResult{Err: err}
+		}
+		var profiles []Profile
+		for _, config := range configs {
+			profiles = append(profiles, Profile{
+				name:        config.Profile,
+				EndpointUrl: config.BaseEndpoint,
+				config:      &config,
+			})
+		}
+
+		return ReadAwsConfigResult{Profiles: profiles}
+	}
 }
 
 func LoadAwsConfig() ([]config.SharedConfig, error) {

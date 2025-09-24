@@ -34,8 +34,8 @@ type Model struct {
 func NewLazyS3Model() Model {
 	return Model{
 		state:         state.ActiveProfileList,
-		bucketList:    bucketlist.NewModel(),
 		profileList:   profilelist.NewModel(),
+		bucketList:    bucketlist.NewModel(),
 		objectlist:    objectlist.NewModel(),
 		previewPannel: preview.NewPreviewModel(),
 	}
@@ -54,7 +54,7 @@ func (m Model) Init() tea.Cmd {
 
 // Update implements tea.Model.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-
+	var cmds []tea.Cmd
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.initComponentsSize(msg)
@@ -64,21 +64,42 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c", "q":
 			return m, tea.Quit
 
-		case "p":
-			m.handlePreviewToggle()
+		case "enter", "right":
+			log.Println("key string:", msg.String())
+
+			cmds = append(
+				cmds,
+				m.handleForward(msg),
+			)
 
 		case "backspace", "left":
 			log.Println("key string:", msg.String())
-			m.handleBackward()
+			cmds = append(cmds,
+				m.handleBackward(),
+			)
 
-		case "enter", "right":
-			log.Println("key string:", msg.String())
-			m.handleForward()
+		case "p":
+			m.handlePreviewToggle()
 
 		default:
 			log.Println("key string:", msg.String())
 		}
+	case bucketlist.FetchBucketListResultMsg:
+		buckets, err := msg.Buckets, msg.Err
+		if err != nil {
+			log.Println("Error fetching bucket list:", err)
+			break
+		}
+		m.bucketList.SetBuckets(buckets)
+	case objectlist.FetchObjectListResultMsg:
+		objects, err := msg.Objects, msg.Err
+		if err != nil {
+			log.Println("Error fetching object list:", err)
+			break
+		}
 
+		log.Printf("------- objects: %#v\n", objects)
+		m.objectlist.SetObjects(objects)
 	}
 
 	// dispatch message to the active component
@@ -87,25 +108,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		newProfileListModel, cmd := m.profileList.Update(msg)
 		m.profileList = newProfileListModel
 		m.previewPannel.SetContent(m.profileList.GetSelectedProfile())
-		return m, cmd
+		cmds = append(cmds, cmd)
 
 	case state.ActiveBucketList:
 		newBucketListModel, cmd := m.bucketList.Update(msg)
 		m.bucketList = newBucketListModel
 		m.previewPannel.SetContent(m.bucketList.GetSelectedBucket())
-		return m, cmd
+		cmds = append(cmds, cmd)
 
 	case state.ActiveObjectList:
 		newObjectListModel, cmd := m.objectlist.Update(msg)
 		m.objectlist = newObjectListModel
 		m.previewPannel.SetContent(m.objectlist.GetSelectedObject())
-		return m, cmd
+		cmds = append(cmds, cmd)
 
 	default:
 		log.Println("Unknown state:", m.state)
-		return m, nil
+		// return m, nil
 	}
 
+	return m, tea.Batch(cmds...)
 }
 
 func (m Model) View() string {

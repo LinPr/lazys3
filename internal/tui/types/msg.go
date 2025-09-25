@@ -1,4 +1,4 @@
-package message
+package typps
 
 import tea "github.com/charmbracelet/bubbletea/v2"
 

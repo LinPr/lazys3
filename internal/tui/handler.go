@@ -70,6 +70,7 @@ func (m *Model) handleBucketSelect() tea.Cmd {
 			S3Uri:   s3uri,
 			Profile: m.selectedProfile,
 		}
+
 		m.objectlist.SetTitle(s3uri)
 		cmd := objectlist.FetchObjectListCmd(opt)
 		cmds = append(cmds, cmd)
@@ -114,11 +115,7 @@ func (m *Model) handleObjectUnSelect() tea.Cmd {
 	if selectedObject := m.objectlist.GetSelectedObject(); selectedObject != nil {
 		selectedObject := selectedObject.Title()
 
-		log.Println("1111111: selectedObject:", selectedObject)
-		// TODO: 需要截取queue的前缀部分，返回上级object list
 		var s3uri string
-		// 砍掉最后一个 / 后面的部分
-
 		parts := strings.Split(strings.TrimSuffix(selectedObject, "/"), "/")
 		log.Println("------ parts:", parts)
 
@@ -139,6 +136,7 @@ func (m *Model) handleObjectUnSelect() tea.Cmd {
 
 		log.Println("----xx--- handleObjectUnSelect s3uri:", s3uri)
 
+		m.objectlist.SetTitle(s3uri)
 		opt := objectlist.Option{
 			S3Uri:   s3uri,
 			Profile: m.selectedProfile,
@@ -210,6 +208,8 @@ func (m *Model) handleBackward() tea.Cmd {
 	case state.ActiveObjectList:
 		cmd := m.handleObjectUnSelect()
 		cmds = append(cmds, cmd)
+
+		m.objectlist.SetObjects([]objectlist.Object{})
 
 		if m.selectedObject == "" {
 			m.state = state.ActiveBucketList

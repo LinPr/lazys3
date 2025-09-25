@@ -8,6 +8,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea/v2"
 )
 
+const ProfileListTitle = "AWS Profiles"
+
 type size struct {
 	width  int
 	height int
@@ -27,7 +29,7 @@ func NewModel() Model {
 	// delegate.Styles.SelectedTitle = delegate.Styles.SelectedTitle.MaxHeight(1)
 	// delegate.Styles.SelectedDesc = delegate.Styles.SelectedDesc.MaxHeight(1)
 	profileList := list.New(items, delegate, 0, 0)
-
+	profileList.Title = ProfileListTitle
 	return Model{
 		profileList: profileList,
 	}
@@ -40,6 +42,10 @@ func (m Model) Init() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		if msg.String() == "esc" {
+			// return m, nil
+		}
 	case ReadAwsConfigResult:
 		if msg.Err != nil {
 			log.Println("read aws config error:", msg.Err)
@@ -49,7 +55,6 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			items = append(items, profile)
 		}
 		m.profileList.SetItems(items)
-		m.SetTitle("AWS Profiles")
 		return m, nil
 	}
 
@@ -84,8 +89,4 @@ func (m *Model) SetSize(width, height int) {
 
 func (m *Model) GetSize() (width, height int) {
 	return m.profileList.Width(), m.profileList.Height()
-}
-
-func (m *Model) SetTitle(title string) {
-	m.profileList.Title = title
 }

@@ -61,22 +61,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyMsg:
 		switch msg.String() {
+		// case "esc":
+		// 	m.state = state.ActiveProfileList
+
 		case "ctrl+c", "q":
 			return m, tea.Quit
 
 		case "enter", "right":
 			log.Println("key string:", msg.String())
 
-			cmds = append(
-				cmds,
-				m.handleForward(msg),
-			)
+			cmds = append(cmds, m.handleForward(msg))
 
 		case "backspace", "left":
 			log.Println("key string:", msg.String())
-			cmds = append(cmds,
-				m.handleBackward(),
-			)
+			cmds = append(cmds, m.handleBackward())
 
 		case "p":
 			m.handlePreviewToggle()
@@ -94,6 +92,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case objectlist.FetchObjectListResultMsg:
 		objects, err := msg.Objects, msg.Err
 		if err != nil {
+			m.objectlist.SetObjects([]objectlist.Object{})
 			log.Println("Error fetching object list:", err)
 			break
 		}

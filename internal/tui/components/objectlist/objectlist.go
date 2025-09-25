@@ -34,6 +34,9 @@ func (m Model) Init() tea.Cmd {
 
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	newObjectListModel, cmd := m.objectlist.Update(msg)
+	if newObjectListModel.FilterState() == list.FilterApplied {
+		newObjectListModel.ResetFilter()
+	}
 	m.objectlist = newObjectListModel
 	return m, cmd
 }

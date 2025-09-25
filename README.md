@@ -12,6 +12,10 @@ lazys3 is a lightweight command-line tool for managing and interacting with S3-c
 
 ## Installation
 
+### Download from release page
+https://github.com/LinPr/lazys3/releases
+
+### Build from source
 ```sh
 git clone https://github.com/LinPr/lazys3.git
 cd lazys3

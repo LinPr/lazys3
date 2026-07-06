@@ -262,6 +262,22 @@ func (m Model) FilterApplied() bool {
 	return m.objectlist.IsFiltered()
 }
 
+// SetSortMode sets the initial sort field ("name" | "size" | "time") and
+// direction from the loaded config. Unknown/empty fields keep the default
+// (name). Called at construction, before any listing arrives.
+func (m *Model) SetSortMode(field string, desc bool) {
+	switch field {
+	case "size":
+		m.sortBy = sortBySize
+	case "time":
+		m.sortBy = sortByTime
+	default:
+		m.sortBy = sortByName
+	}
+	m.sortDesc = desc
+	m.refreshTitle()
+}
+
 // CycleSortField advances name -> size -> time -> name and re-sorts. The
 // returned cmd (a filter re-run when a filter is applied) must be
 // dispatched.

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/LinPr/lazys3/internal/strutil"
+	"github.com/LinPr/lazys3/internal/tui/components/style"
 	"github.com/charmbracelet/bubbles/v2/list"
 	tea "github.com/charmbracelet/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss/v2"
@@ -47,12 +48,28 @@ type selectDelegate struct {
 }
 
 func newSelectDelegate(selected *selectionSet) selectDelegate {
+	styles := list.NewDefaultItemStyles(true)
+	// Theme override for the highlighted row (style.Apply runs before the
+	// components are constructed).
+	if c := style.SelectedItemFg; c != nil {
+		styles.SelectedTitle = styles.SelectedTitle.Foreground(c).BorderForeground(c)
+	}
 	return selectDelegate{
-		styles:   list.NewDefaultItemStyles(true),
+		styles:   styles,
 		selected: selected,
 		height:   1,
 		spacing:  0,
 	}
+}
+
+// iconRuneIndexes returns the row-relative rune indexes of the icon glyph
+// (which sits right after the 4-rune marker), for lipgloss.StyleRunes.
+func iconRuneIndexes(icon string) []int {
+	idx := make([]int, 0, len([]rune(icon)))
+	for i := range []rune(icon) {
+		idx = append(idx, markerWidth+i)
+	}
+	return idx
 }
 
 func (d selectDelegate) Height() int                             { return d.height }
@@ -153,15 +170,27 @@ func (d selectDelegate) Render(w io.Writer, m list.Model, index int, item list.I
 	s := &d.styles
 	textwidth := m.Width() - s.NormalTitle.GetPaddingLeft() - s.NormalTitle.GetPaddingRight()
 
+	// Optional Nerd Font icon column between the marker and the name.
+	// Budgeted with the measured glyph width + 1 space (some glyphs
+	// measure 1 cell but terminals may render them wide, so the space
+	// keeps the name readable either way). Empty glyph = column absent.
+	icon, iconColor := style.IconFor(obj.DisplayName(), obj.isDir, false)
+	iconCol := ""
+	iconPad := 0
+	if icon != "" {
+		iconCol = icon + " "
+		iconPad = ansi.StringWidth(icon) + 1
+	}
+
 	// Degrade gracefully at narrow widths: drop class, then mtime, then
 	// size, always preserving minNameWidth for the name.
-	avail := textwidth - markerWidth
+	avail := textwidth - markerWidth - iconPad
 	showSize := avail >= minNameWidth+colGap+sizeWidth
 	showMtime := showSize && avail >= minNameWidth+2*colGap+sizeWidth+mtimeWidth
 	showClass := showMtime && avail >= minNameWidth+3*colGap+sizeWidth+mtimeWidth+classWidth
 
 	meta := metaColumns(obj, showSize, showMtime, showClass)
-	nameWidth := textwidth - markerWidth - lipgloss.Width(meta)
+	nameWidth := textwidth - markerWidth - iconPad - lipgloss.Width(meta)
 	// The name column shows the key relative to the current prefix; the
 	// filter matches (rune indexes into FilterValue == DisplayName) stay
 	// aligned with it.
@@ -170,7 +199,7 @@ func (d selectDelegate) Render(w io.Writer, m list.Model, index int, item list.I
 	if gap := nameWidth - lipgloss.Width(name); gap > 0 {
 		namePad = strings.Repeat(" ", gap)
 	}
-	row := d.markerFor(obj.name) + name + namePad + meta
+	row := d.markerFor(obj.name) + iconCol + name + namePad + meta
 
 	var (
 		isSelected  = index == m.Index()
@@ -179,13 +208,15 @@ func (d selectDelegate) Render(w io.Writer, m list.Model, index int, item list.I
 	)
 
 	// Filter matches are rune indexes into the name; shift them past the
-	// marker column and drop any beyond the truncated name.
+	// marker column (and the icon column when present) and drop any beyond
+	// the truncated name.
 	var matchedRunes []int
 	if isFiltered && index < len(m.VisibleItems()) {
 		nameRunes := len([]rune(name))
+		shift := markerWidth + len([]rune(iconCol))
 		for _, r := range m.MatchesForItem(index) {
 			if r < nameRunes {
-				matchedRunes = append(matchedRunes, r+markerWidth)
+				matchedRunes = append(matchedRunes, r+shift)
 			}
 		}
 	}
@@ -198,6 +229,9 @@ func (d selectDelegate) Render(w io.Writer, m list.Model, index int, item list.I
 			unmatched := s.SelectedTitle.Inline(true)
 			matched := unmatched.Inherit(s.FilterMatch)
 			row = lipgloss.StyleRunes(row, matchedRunes, matched, unmatched)
+		} else if icon != "" && iconColor != nil {
+			base := s.SelectedTitle.Inline(true)
+			row = lipgloss.StyleRunes(row, iconRuneIndexes(icon), base.Foreground(iconColor), base)
 		}
 		row = s.SelectedTitle.Render(row)
 	default:
@@ -205,6 +239,9 @@ func (d selectDelegate) Render(w io.Writer, m list.Model, index int, item list.I
 			unmatched := s.NormalTitle.Inline(true)
 			matched := unmatched.Inherit(s.FilterMatch)
 			row = lipgloss.StyleRunes(row, matchedRunes, matched, unmatched)
+		} else if icon != "" && iconColor != nil {
+			base := s.NormalTitle.Inline(true)
+			row = lipgloss.StyleRunes(row, iconRuneIndexes(icon), base.Foreground(iconColor), base)
 		}
 		row = s.NormalTitle.Render(row)
 	}

@@ -15,6 +15,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss/v2"
 
+	"github.com/LinPr/lazys3/internal/config"
 	"github.com/LinPr/lazys3/internal/history"
 	"github.com/LinPr/lazys3/internal/tui/components/bucketlist"
 	"github.com/LinPr/lazys3/internal/tui/components/help"
@@ -67,34 +68,65 @@ type Model struct {
 	// unconditionally would make every StatusUpdateMsg pass spawn the
 	// next one — an infinite self-perpetuating message loop.
 	lastStatus types.StatusUpdateMsg
+	// transferPanelHeight is the vertical budget reserved for the transfer
+	// panel ([ui] transfer_panel_height, defaulting to
+	// defaultTransferPanelHeight).
+	transferPanelHeight int
 	size
 }
 
 func NewLazyS3Model() Model {
+	return NewLazyS3ModelWithConfig(config.Config{})
+}
+
+// NewLazyS3ModelWithConfig constructs the top-level model from the loaded
+// user config (cmd/root.go loads it once and applies the theme to the
+// style package before calling this). The zero Config keeps every default.
+func NewLazyS3ModelWithConfig(cfg config.Config) Model {
 	// Work around a bubbletea-beta1 renderer bug under GNU screen / the
 	// Linux console before tea.Program picks its renderer (see renderer.go).
 	ensureCompatRenderer()
-	// The local pane's first load is the lazys3 process's working
-	// directory, captured once here (EnsureLoaded falls back to $HOME
-	// then "/" when Getwd fails).
+	// The local pane's first load is [local] start_dir when configured
+	// (config.Load only keeps it when the directory exists), otherwise the
+	// lazys3 process's working directory, captured once here (EnsureLoaded
+	// falls back to $HOME then "/" when Getwd fails).
 	localList := locallist.NewModel()
-	if wd, err := os.Getwd(); err == nil && wd != "" {
-		localList.SetStartDir(wd)
+	startDir := cfg.Local.StartDir
+	if startDir == "" {
+		if wd, err := os.Getwd(); err == nil && wd != "" {
+			startDir = wd
+		}
 	}
+	if startDir != "" {
+		localList.SetStartDir(startDir)
+	}
+	objectList := objectlist.NewModel()
+	if cfg.UI.DefaultSort != "" || cfg.UI.SortDesc {
+		objectList.SetSortMode(cfg.UI.DefaultSort, cfg.UI.SortDesc)
+		localList.SetSortMode(cfg.UI.DefaultSort, cfg.UI.SortDesc)
+	}
+	tph := cfg.UI.TransferPanelHeight
+	if tph == 0 {
+		tph = defaultTransferPanelHeight
+	}
+	transferPanel := transferpanel.NewModel()
+	// The panel's frame eats 2 lines and its title 1; the rest is rows.
+	transferPanel.SetMaxVisible(tph - 3)
 	return Model{
-		state:         state.ActiveProfileList,
-		profileList:   profilelist.NewModel(),
-		bucketList:    bucketlist.NewModel(),
-		objectlist:    objectlist.NewModel(),
-		previewPanel:  preview.NewPreviewModel(),
-		transferPanel: transferpanel.NewModel(),
-		modal:         modal.NewModel(),
-		statusBar:     statusbar.NewModel(),
-		help:          help.NewModel(),
-		historyView:   historyview.NewModel(),
-		versionView:   versionview.NewModel(),
-		historyStore:  history.NewStore(history.DefaultPath()),
-		localList:     localList,
+		state:               state.ActiveProfileList,
+		profileList:         profilelist.NewModel(),
+		bucketList:          bucketlist.NewModel(),
+		objectlist:          objectList,
+		previewPanel:        preview.NewPreviewModel(),
+		transferPanel:       transferPanel,
+		modal:               modal.NewModel(),
+		statusBar:           statusbar.NewModel(),
+		help:                help.NewModel(),
+		historyView:         historyview.NewModel(),
+		versionView:         versionview.NewModel(),
+		historyStore:        history.NewStore(history.DefaultPath()),
+		localList:           localList,
+		transferPanelHeight: tph,
 	}
 }
 

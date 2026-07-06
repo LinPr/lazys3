@@ -1,6 +1,7 @@
 package bucketlist
 
 import (
+	"github.com/LinPr/lazys3/internal/tui/components/style"
 	"github.com/charmbracelet/bubbles/v2/list"
 	"github.com/charmbracelet/bubbles/v2/textinput"
 	"github.com/charmbracelet/lipgloss/v2"
@@ -25,6 +26,12 @@ func NewCustomItemStyles(isDark bool) (s list.DefaultItemStyles) {
 
 	s.SelectedDesc = s.SelectedTitle.
 		Foreground(lightDark(lipgloss.Color("#F793FF"), lipgloss.Color("#AD58B4")))
+
+	// Theme override for the highlighted row (style.Apply runs before the
+	// components are constructed).
+	if c := style.SelectedItemFg; c != nil {
+		s.SelectedTitle = s.SelectedTitle.Foreground(c).BorderForeground(c)
+	}
 
 	s.DimmedTitle = lipgloss.NewStyle().
 		Foreground(lightDark(lipgloss.Color("#A49FA5"), lipgloss.Color("#777777"))).

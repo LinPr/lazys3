@@ -44,6 +44,31 @@ Start the TUI:
 
 ## Configuration
 
+### lazys3 config file
+
+lazys3 reads `$XDG_CONFIG_HOME/lazys3/config.toml` (default `~/.config/lazys3/config.toml`). A commented template is written on first run. All keys are optional; invalid values fall back to the defaults.
+
+```toml
+[theme]
+focused_border = "#20e71c"    # border of the focused pane
+unfocused_border = "#555555"  # border of the unfocused pane (dual-pane mode)
+title_fg = "#e39f00"          # status-bar profile chip foreground
+title_bg = "#444745"          # status-bar profile chip background
+status_error_fg = "#ffffff"   # status-bar error text
+selected_fg = ""              # highlighted list row foreground
+
+[ui]
+nerd_font = false             # render Nerd Font file icons (needs a patched font)
+default_sort = "name"         # initial sort field: name | size | time
+sort_desc = false             # sort descending by default
+transfer_panel_height = 6     # transfer panel rows, 4..10
+
+[local]
+start_dir = ""                # local pane start directory, "~" ok (default: process cwd)
+```
+
+### AWS credentials
+
 Configure your S3 credentials and endpoints in `~/.aws/config` and `~/.aws/credentials`. Example:
 
 ```ini

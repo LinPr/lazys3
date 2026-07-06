@@ -55,10 +55,11 @@ func shouldUsePathStyle(endpointURL string) bool {
 	return true
 }
 
-// transferPanelHeight is the vertical budget reserved for the transfer
-// panel at the bottom of the TUI. The panel's own View() collapses to ""
-// when there are no transfers, so this only kicks in once an op is queued.
-const transferPanelHeight = 6
+// defaultTransferPanelHeight is the vertical budget reserved for the
+// transfer panel at the bottom of the TUI when [ui] transfer_panel_height
+// is not configured. The panel's own View() collapses to "" when there are
+// no transfers, so this only kicks in once an op is queued.
+const defaultTransferPanelHeight = 6
 
 // statusBarHeight is the vertical budget reserved for the persistent
 // status bar at the very bottom of the TUI. The bar always renders one
@@ -962,7 +963,7 @@ func (m *Model) initComponentsSize(msg tea.WindowSizeMsg) {
 
 	// Transfer panel gets its reserved slice; status bar gets the
 	// remaining 1 row at the very bottom.
-	m.transferPanel.SetSize(m.width, transferPanelHeight)
+	m.transferPanel.SetSize(m.width, m.effectiveTransferPanelHeight())
 	m.statusBar.SetSize(m.width, statusBarHeight)
 	m.modal.SetSize(m.width, m.height)
 	// Help and history overlays use the full canvas so they can lay
@@ -1203,8 +1204,23 @@ func (m *Model) handlePreviewToggle() {
 // preview state. The list area always reserves room for the transfer
 // panel and the persistent status bar at the bottom. All sizes are outer
 // dimensions; each component subtracts its own border frame.
+// effectiveTransferPanelHeight clamps the configured panel height against
+// the current terminal height so lists (4 rows minimum), panel and status
+// bar always stack within m.height. On very short terminals the panel
+// shrinks down to a 3-row floor (its View clips itself via MaxHeight).
+func (m *Model) effectiveTransferPanelHeight() int {
+	tph := m.transferPanelHeight
+	if avail := m.height - statusBarHeight - 4; avail < tph {
+		tph = avail
+	}
+	if tph < 3 {
+		tph = 3
+	}
+	return tph
+}
+
 func (m *Model) resizeLists() {
-	listHeight := m.height - transferPanelHeight - statusBarHeight
+	listHeight := m.height - m.effectiveTransferPanelHeight() - statusBarHeight
 	if listHeight < 4 {
 		listHeight = 4
 	}

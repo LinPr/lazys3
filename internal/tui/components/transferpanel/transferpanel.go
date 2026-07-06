@@ -461,6 +461,16 @@ func (m *Model) SetSize(w, h int) {
 	m.height = h
 }
 
+// SetMaxVisible sets the row cap so a configured transfer_panel_height can
+// actually show more (or fewer) rows than the default. Values below 1 are
+// clamped.
+func (m *Model) SetMaxVisible(n int) {
+	if n < 1 {
+		n = 1
+	}
+	m.maxVisible = n
+}
+
 // NextID returns the next transfer ID without queuing anything. Used by
 // handlers that need an ID before queuing (e.g. to pass into a tea.Cmd).
 func (m *Model) NextID() string {

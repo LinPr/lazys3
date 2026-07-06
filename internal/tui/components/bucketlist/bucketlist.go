@@ -15,6 +15,15 @@ import (
 
 const BucketListTitle = "S3 Buckets"
 
+// listTitle composes the list title, prefixed with the Nerd Font bucket
+// glyph when icons are enabled.
+func listTitle() string {
+	if g, _ := style.BucketIcon(); g != "" {
+		return g + " " + BucketListTitle
+	}
+	return BucketListTitle
+}
+
 type Model struct {
 	Title      string
 	Option     *Option
@@ -38,7 +47,7 @@ func NewModel() Model {
 	bucketlist := list.New(items, delegate, 0, 0)
 	bucketlist.Styles = CustomStyle(true)
 	bucketlist.Filter = filter.Substring
-	bucketlist.Title = BucketListTitle
+	bucketlist.Title = listTitle()
 	bucketlist.DisableQuitKeybindings()
 	// Narrow paging to pgup/pgdown so the default bindings (right/l/d/f,
 	// left/h/b/u) don't shadow the global navigation and file-op keys.
@@ -159,7 +168,7 @@ func (m *Model) SetSize(width, height int) {
 	// wraps onto a second line at narrow pane widths. Shrink the help
 	// budget by the style's frame so the footer truncates ("…") instead.
 	m.bucketlist.Help.Width = max(m.bucketlist.Width()-m.bucketlist.Styles.HelpStyle.GetHorizontalFrameSize(), 0)
-	m.bucketlist.Title = style.FitListTitle(BucketListTitle, m.bucketlist.Width())
+	m.bucketlist.Title = style.FitListTitle(listTitle(), m.bucketlist.Width())
 }
 
 // GetSize returns the outer dimensions from SetSize.

@@ -65,4 +65,10 @@ var (
 
 	StatusMessageStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#04B575"))
+
+	// StatusErrorStyle renders the status bar's error chip.
+	StatusErrorStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#ffffff")).
+				Background(lipgloss.Color("#cc0000")).
+				Padding(0, 1)
 )

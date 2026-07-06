@@ -143,20 +143,16 @@ func (m Model) View() string {
 		return ""
 	}
 
-	profileStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#e39f00ff")).
-		Background(lipgloss.Color("#444745ff")).
-		Padding(0, 1)
+	// The profile chip and the error chip pick up theme overrides via the
+	// shared style vars (title_fg/title_bg, status_error_fg).
+	profileStyle := style.TitleStyle
 	pathStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#dddddd"))
 	selStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#3b82f6"))
 	infoStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#22c55e"))
-	errStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#ffffff")).
-		Background(lipgloss.Color("#cc0000")).
-		Padding(0, 1)
+	errStyle := style.StatusErrorStyle
 
 	profileBlock := profileStyle.Render(profileLabel(m.profile))
 	uri := m.S3URI()

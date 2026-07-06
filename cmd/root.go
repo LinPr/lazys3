@@ -6,7 +6,9 @@ import (
 	"log"
 	"os"
 
+	"github.com/LinPr/lazys3/internal/config"
 	"github.com/LinPr/lazys3/internal/tui"
+	"github.com/LinPr/lazys3/internal/tui/components/style"
 	tea "github.com/charmbracelet/bubbletea/v2"
 	"github.com/spf13/cobra"
 )
@@ -55,7 +57,14 @@ func (o *Options) Run() error {
 	cleanup := logInit(o.Debug)
 	defer cleanup()
 
-	model := tui.NewLazyS3Model()
+	// The config is loaded once and its theme applied to the shared style
+	// vars BEFORE any component is constructed (delegates copy the styles
+	// at construction time).
+	cfg := config.Load()
+	style.Apply(cfg.Theme)
+	style.SetNerdFont(cfg.UI.NerdFont)
+
+	model := tui.NewLazyS3ModelWithConfig(cfg)
 	p := tea.NewProgram(
 		model,
 		tea.WithAltScreen(),

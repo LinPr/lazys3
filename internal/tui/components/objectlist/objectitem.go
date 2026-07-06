@@ -236,6 +236,10 @@ func listObjects(ctx context.Context, cli *s3store.S3Store, bucket, key string, 
 	return objectList, nil
 }
 
+// NewDirObject constructs a directory entry with the given prefix key.
+// Parent-package tests use it to stage a listing without a live fetch.
+func NewDirObject(name string) Object { return Object{name: name, isDir: true} }
+
 // sortSlice orders directories first, then files, each alphabetical
 // (case-insensitive). It is the default order applied at fetch time;
 // Model.SetObjects re-sorts by the user's active sort mode.

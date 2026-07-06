@@ -25,6 +25,7 @@ import (
 	"github.com/LinPr/lazys3/internal/tui/components/style"
 	"github.com/LinPr/lazys3/internal/tui/components/syncmodal"
 	"github.com/LinPr/lazys3/internal/tui/components/transferpanel"
+	"github.com/LinPr/lazys3/internal/tui/components/versionview"
 	"github.com/LinPr/lazys3/internal/tui/keybinding"
 	"github.com/LinPr/lazys3/internal/tui/state"
 	"github.com/LinPr/lazys3/internal/tui/types"
@@ -46,6 +47,7 @@ type Model struct {
 	statusBar       statusbar.Model
 	help            help.Model
 	historyView     historyview.Model
+	versionView     versionview.Model
 	historyStore    *history.Store
 	selectedProfile string
 	selectedBucket  string
@@ -73,6 +75,7 @@ func NewLazyS3Model() Model {
 		statusBar:     statusbar.NewModel(),
 		help:          help.NewModel(),
 		historyView:   historyview.NewModel(),
+		versionView:   versionview.NewModel(),
 		historyStore:  history.NewStore(history.DefaultPath()),
 	}
 }
@@ -88,6 +91,7 @@ func (m Model) Init() tea.Cmd {
 		m.statusBar.Init(),
 		m.help.Init(),
 		m.historyView.Init(),
+		m.versionView.Init(),
 	)
 }
 
@@ -134,6 +138,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.historyView.Hide()
 			} else {
 				m.historyView.HandleKey(msg.String())
+			}
+			cmds = append(cmds, m.emitStatusUpdate())
+			return m, tea.Batch(cmds...)
+		}
+		// Versions overlay: 'v'/esc closes, j/k/pgup/pgdown move the
+		// cursor, d/R/D act on the highlighted row (routed back as an
+		// ActionMsg that opens the matching modal flow). 'x' keeps its
+		// global cancel meaning — version ops are launched from this
+		// overlay, so a running download must stay cancellable behind it.
+		// Everything else is swallowed so global hotkeys never fire
+		// behind the overlay.
+		if m.versionView.IsVisible() {
+			key := keybinding.KeyString(msg.String())
+			if key == keybinding.VersionsToggle || msg.String() == "esc" {
+				m.versionView.Hide()
+			} else if key == keybinding.TransferCancel {
+				if id, ok := m.transferPanel.CancelLatest(); ok {
+					log.Println("cancelled transfer:", id)
+				}
+			} else if cmd := m.versionView.HandleKey(key); cmd != nil {
+				cmds = append(cmds, cmd)
 			}
 			cmds = append(cmds, m.emitStatusUpdate())
 			return m, tea.Batch(cmds...)
@@ -200,6 +225,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case keybinding.HistoryToggle:
 				m.historyView.Show()
 				return m, tea.Batch(historyview.LoadCmd(m.historyStore), m.emitStatusUpdate())
+
+			// v opens the object-versions overlay for the highlighted file
+			// (object list only; directories error on the status bar).
+			case keybinding.VersionsToggle:
+				if cmd := m.handleVersionsOpen(); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+				cmds = append(cmds, m.emitStatusUpdate())
+				return m, tea.Batch(cmds...)
+
+			// V toggles bucket versioning on the highlighted bucket. The
+			// current status is fetched first; the confirm modal opens when
+			// the BucketStatusMsg arrives.
+			case keybinding.VersioningToggle:
+				if cmd := m.handleVersioningToggle(); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+				cmds = append(cmds, m.emitStatusUpdate())
+				return m, tea.Batch(cmds...)
 
 			// Multi-select: space toggles the current object's selection.
 			// We handle this here (before forwarding to the list) because
@@ -306,6 +350,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if cmd := m.refreshAfterOp(tmsg); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
+			// A restore (copy) or version delete completed while the
+			// versions overlay is open changes its listing: re-fetch it.
+			if m.versionView.IsVisible() && (tmsg.Op == transferpanel.OpCopy || tmsg.Op == transferpanel.OpDelete) {
+				if cmd := m.versionView.Refresh(); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+			}
+			// A versioning toggle changes the bucket preview's Versioning
+			// line; invalidate the memo so the same selection re-fetches.
+			if tmsg.Op == transferpanel.OpVersioning {
+				m.previewPanel.Invalidate()
+				if pc := m.previewCmdForSelection(); pc != nil {
+					cmds = append(cmds, pc)
+				}
+			}
+		}
+	case versionview.LoadedMsg:
+		newVV, cmd := m.versionView.Update(tmsg)
+		m.versionView = newVV
+		cmds = append(cmds, cmd)
+	case versionview.ActionMsg:
+		// d/R/D on an overlay row: open the matching modal flow on the
+		// live model. The overlay stays open behind the modal (View gives
+		// the modal render precedence while it is visible).
+		if cmd := m.handleVersionAction(tmsg); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case versionview.BucketStatusMsg:
+		if cmd := m.handleBucketStatus(tmsg); cmd != nil {
+			cmds = append(cmds, cmd)
 		}
 	case historyview.LoadedMsg:
 		newHV, cmd := m.historyView.Update(tmsg)
@@ -353,7 +427,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// half-typed input would be silently discarded, and a modal opened
 		// behind a full-screen overlay would swallow keys invisibly): fall
 		// back to a status-bar note — the URL is on the clipboard either way.
-		if m.modal.IsVisible() || m.help.IsVisible() || m.historyView.IsVisible() {
+		if m.modal.IsVisible() || m.help.IsVisible() || m.historyView.IsVisible() || m.versionView.IsVisible() {
 			note := fmt.Sprintf("presigned URL for %s copied to clipboard (valid %s)", path.Base(tmsg.Key), tmsg.Expiry)
 			if insecure {
 				note += " — plain HTTP"
@@ -643,8 +717,15 @@ func (m Model) View() string {
 	if m.historyView.IsVisible() {
 		return m.historyView.View()
 	}
+	// The modal outranks the versions overlay: a modal opened from an
+	// overlay row action (download/restore/delete) must be the visible,
+	// key-receiving surface. The overlay stays open underneath and
+	// reappears when the modal resolves (confirm or esc).
 	if m.modal.IsVisible() {
 		return m.modal.View()
+	}
+	if m.versionView.IsVisible() {
+		return m.versionView.View()
 	}
 
 	return layout

@@ -143,6 +143,41 @@ func (s *Storage) PresignPutObject(ctx context.Context, bucketName string, objec
 	return s.remote.PresignPutObject(ctx, bucketName, objectKey, expiry)
 }
 
+// PutBucketVersioning enables or suspends versioning on the bucket.
+func (s *Storage) PutBucketVersioning(ctx context.Context, bucket string, enabled bool) error {
+	return s.remote.PutBucketVersioning(ctx, bucket, enabled)
+}
+
+// GetBucketVersioning returns "Enabled", "Suspended", or "" (never versioned).
+func (s *Storage) GetBucketVersioning(ctx context.Context, bucket string) (string, error) {
+	return s.remote.GetBucketVersioning(ctx, bucket)
+}
+
+// ListObjectVersions returns the version history (versions and delete
+// markers) of exactly one key, newest first.
+func (s *Storage) ListObjectVersions(ctx context.Context, bucket, key string) ([]s3store.ObjectVersion, error) {
+	return s.remote.ListObjectVersions(ctx, bucket, key)
+}
+
+// GetObjectVersion is GetObject pinned to a specific version. The caller
+// owns the returned Body and must close it.
+func (s *Storage) GetObjectVersion(ctx context.Context, bucket, key, versionID string) (*s3.GetObjectOutput, error) {
+	return s.remote.GetObjectVersion(ctx, bucket, key, versionID)
+}
+
+// DeleteObjectVersion permanently removes one specific version or delete
+// marker; deleting the current delete marker undeletes the object.
+func (s *Storage) DeleteObjectVersion(ctx context.Context, bucket, key, versionID string) error {
+	return s.remote.DeleteObjectVersion(ctx, bucket, key, versionID)
+}
+
+// RestoreObjectVersion server-side copies an old version onto the same key,
+// making it the newest version. storageClass, when non-empty, is applied to
+// the copy (CopyObject does not inherit the source's storage class).
+func (s *Storage) RestoreObjectVersion(ctx context.Context, bucket, key, versionID, storageClass string) error {
+	return s.remote.RestoreObjectVersion(ctx, bucket, key, versionID, storageClass)
+}
+
 func (s *Storage) DownloadFile(ctx context.Context, bucketName string, objectKey string, localFile string) error {
 	return s.DownloadFileWithProgress(ctx, bucketName, objectKey, localFile, nil)
 }
@@ -152,11 +187,30 @@ func (s *Storage) DownloadFile(ctx context.Context, bucketName string, objectKey
 // are written locally, with the object's ContentLength as totalBytes
 // (-1 when the server did not report it), and once more at completion.
 func (s *Storage) DownloadFileWithProgress(ctx context.Context, bucketName string, objectKey string, localFile string, progress ProgressFunc) error {
-
 	result, err := s.remote.GetObject(ctx, bucketName, objectKey)
 	if err != nil {
 		return err
 	}
+	return streamObjectToFile(result, objectKey, localFile, progress)
+}
+
+// DownloadFileVersionWithProgress is DownloadFileWithProgress pinned to a
+// specific object version (GetObject with VersionId). Destination handling
+// (stdout, directory, temp-file+rename) and progress semantics are
+// identical.
+func (s *Storage) DownloadFileVersionWithProgress(ctx context.Context, bucketName string, objectKey string, versionID string, localFile string, progress ProgressFunc) error {
+	result, err := s.remote.GetObjectVersion(ctx, bucketName, objectKey, versionID)
+	if err != nil {
+		return err
+	}
+	return streamObjectToFile(result, objectKey, localFile, progress)
+}
+
+// streamObjectToFile drains a GetObject body to localFile (or stdout for
+// ""/"-"), reporting progress. It closes the body. A directory destination
+// means "download into it"; regular files are written via a temp file next
+// to the destination and renamed on success.
+func streamObjectToFile(result *s3.GetObjectOutput, objectKey string, localFile string, progress ProgressFunc) error {
 	defer result.Body.Close() //nolint:errcheck // best-effort cleanup of the GetObject body
 
 	total := int64(-1)
@@ -166,7 +220,7 @@ func (s *Storage) DownloadFileWithProgress(ctx context.Context, bucketName strin
 	tracker := newProgressTracker(total, progress)
 
 	if localFile == "" || localFile == "-" {
-		if _, err = io.Copy(&progressWriter{w: os.Stdout, t: tracker}, result.Body); err != nil {
+		if _, err := io.Copy(&progressWriter{w: os.Stdout, t: tracker}, result.Body); err != nil {
 			return err
 		}
 		tracker.finish()
@@ -189,7 +243,7 @@ func (s *Storage) DownloadFileWithProgress(ctx context.Context, bucketName strin
 		return err
 	}
 	tmp := file.Name()
-	if _, err = io.Copy(&progressWriter{w: file, t: tracker}, result.Body); err != nil {
+	if _, err := io.Copy(&progressWriter{w: file, t: tracker}, result.Body); err != nil {
 		_ = file.Close()
 		_ = os.Remove(tmp)
 		return err

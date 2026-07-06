@@ -2,7 +2,7 @@
 //
 // Keys already claimed by the global dispatcher (tui.go): q, ctrl+c,
 // enter, right, backspace, left, p, t, T, ?, space, a, d, u, D, r, c, B,
-// s, y.
+// s, y, v, V.
 // The object-list component additionally claims the keys below; they are
 // exported so the help overlay and the component reference one source of
 // truth.
@@ -46,4 +46,12 @@ const (
 	// HistoryToggle (shift+t) opens/closes the persistent transfer-history
 	// overlay (global, handled in tui.go).
 	HistoryToggle = "T"
+
+	// VersionsToggle opens/closes the object-versions overlay for the
+	// highlighted file (global, handled in tui.go).
+	VersionsToggle = "v"
+
+	// VersioningToggle (shift+v) toggles bucket versioning
+	// (Enabled <-> Suspended) on the highlighted bucket.
+	VersioningToggle = "V"
 )

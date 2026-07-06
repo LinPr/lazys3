@@ -145,6 +145,17 @@ func destroyBucket(ctx context.Context, client *s3.Client, bucket string) error 
 			switch apiErr.ErrorCode() {
 			case "NoSuchBucket", "NotFound":
 				return nil
+			case "BucketNotEmpty":
+				// A versioned bucket can be "empty" in the plain listing yet
+				// still hold noncurrent versions and delete markers, which
+				// DeleteBucket refuses to remove. Purge the version history
+				// and retry. Unversioned buckets never reach this branch
+				// with leftovers the plain purge above cannot handle.
+				if perr := purgeObjectVersions(ctx, client, bucket); perr != nil {
+					lastErr = fmt.Errorf("purge versions: %w", perr)
+					time.Sleep(500 * time.Millisecond)
+					continue
+				}
 			}
 		}
 		lastErr = fmt.Errorf("delete bucket: %w", err)
@@ -154,6 +165,33 @@ func destroyBucket(ctx context.Context, client *s3.Client, bucket string) error 
 		lastErr = ctx.Err()
 	}
 	return lastErr
+}
+
+// purgeObjectVersions deletes every object version and delete marker in
+// the bucket, paginating ListObjectVersions with the
+// KeyMarker/VersionIdMarker cursor. Needed to empty a versioned bucket:
+// the plain object listing hides noncurrent versions and delete markers.
+func purgeObjectVersions(ctx context.Context, client *s3.Client, bucket string) error {
+	input := &s3.ListObjectVersionsInput{Bucket: aws.String(bucket)}
+	for {
+		out, err := client.ListObjectVersions(ctx, input)
+		if err != nil {
+			return err
+		}
+		var objects []types.ObjectIdentifier
+		for _, v := range out.Versions {
+			objects = append(objects, types.ObjectIdentifier{Key: v.Key, VersionId: v.VersionId})
+		}
+		for _, m := range out.DeleteMarkers {
+			objects = append(objects, types.ObjectIdentifier{Key: m.Key, VersionId: m.VersionId})
+		}
+		deleteObjectList(ctx, client, bucket, objects)
+		if out.IsTruncated == nil || !*out.IsTruncated {
+			return nil
+		}
+		input.KeyMarker = out.NextKeyMarker
+		input.VersionIdMarker = out.NextVersionIdMarker
+	}
 }
 
 // deleteObjectList deletes the given objects, working around OSS's
@@ -170,11 +208,13 @@ func deleteObjectList(ctx context.Context, client *s3.Client, bucket string, obj
 	if err == nil {
 		return
 	}
-	// Fall back to per-object deletes.
+	// Fall back to per-object deletes, keeping the version pin when the
+	// identifier targets a specific version or delete marker.
 	for _, o := range objects {
 		_, _ = client.DeleteObject(ctx, &s3.DeleteObjectInput{
-			Bucket: aws.String(bucket),
-			Key:    o.Key,
+			Bucket:    aws.String(bucket),
+			Key:       o.Key,
+			VersionId: o.VersionId,
 		})
 	}
 }

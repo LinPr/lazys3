@@ -113,6 +113,8 @@ func DefaultBindings() []Group {
 				{Key: "B", Desc: "make bucket (in bucket list)"},
 				{Key: "s", Desc: "sync directory (local ⇄ s3, s3 ⇄ s3)"},
 				{Key: "y", Desc: "generate presigned share URL"},
+				{Key: "v", Desc: "object versions (download / restore / delete a version)"},
+				{Key: "V", Desc: "toggle bucket versioning (Enabled ⇄ Suspended, in bucket list)"},
 			},
 		},
 		{

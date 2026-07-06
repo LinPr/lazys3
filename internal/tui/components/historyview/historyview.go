@@ -169,7 +169,7 @@ func pad(s string, w int) string {
 func renderRow(r history.Record, inner int) string {
 	const (
 		timeW   = 11
-		opW     = 8
+		opW     = 10
 		statusW = 8
 		sizeW   = 7
 	)
@@ -220,7 +220,7 @@ func (m Model) View() string {
 	lines := []string{
 		titleStyle.Render("lazys3 — transfer history"),
 		headerStyle.Render(ansi.Truncate(fmt.Sprintf("%s  %s  %s  %s  %s",
-			pad("time", 11), pad("op", 8), pad("status", 8), pad("size", 7), "label"), inner, "")),
+			pad("time", 11), pad("op", 10), pad("status", 8), pad("size", 7), "label"), inner, "")),
 	}
 
 	switch {

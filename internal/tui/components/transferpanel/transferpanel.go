@@ -43,6 +43,7 @@ const (
 	OpMakeBucket   Op = "mb"
 	OpDeleteBucket Op = "rb"
 	OpSync         Op = "sync"
+	OpVersioning   Op = "versioning"
 )
 
 // Status is the lifecycle state of a Transfer.
@@ -491,6 +492,8 @@ func opIcon(op Op) string {
 		return "⊟"
 	case OpSync:
 		return "⇅"
+	case OpVersioning:
+		return "◈"
 	default:
 		return "•"
 	}

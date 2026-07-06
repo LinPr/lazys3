@@ -164,6 +164,12 @@ func (pm *Model) SetContent(item PreviewItem) tea.Cmd {
 	return pm.fetchContentCmd(req)
 }
 
+// Invalidate clears the last-item memo so the next SetContent re-fetches
+// even for an unchanged selection. Used after ops that change what the
+// preview shows without changing the highlighted item (e.g. a bucket
+// versioning toggle updates the bucket preview's Versioning line).
+func (pm *Model) Invalidate() { pm.lastKey = "" }
+
 // previewKey builds the identity key SetContent uses to detect whether the
 // highlighted item changed. Requests reuse the fetch token; synchronous-only
 // items (Profile) fall back to their FilterValue.

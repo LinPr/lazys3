@@ -29,6 +29,7 @@ import (
 	"github.com/LinPr/lazys3/internal/tui/components/style"
 	"github.com/LinPr/lazys3/internal/tui/components/syncmodal"
 	"github.com/LinPr/lazys3/internal/tui/components/transferpanel"
+	"github.com/LinPr/lazys3/internal/tui/components/transferview"
 	"github.com/LinPr/lazys3/internal/tui/components/versionview"
 	"github.com/LinPr/lazys3/internal/tui/keybinding"
 	"github.com/LinPr/lazys3/internal/tui/state"
@@ -51,6 +52,7 @@ type Model struct {
 	statusBar       statusbar.Model
 	help            help.Model
 	historyView     historyview.Model
+	transferView    transferview.Model
 	versionView     versionview.Model
 	historyStore    *history.Store
 	selectedProfile string
@@ -68,10 +70,6 @@ type Model struct {
 	// unconditionally would make every StatusUpdateMsg pass spawn the
 	// next one — an infinite self-perpetuating message loop.
 	lastStatus types.StatusUpdateMsg
-	// transferPanelHeight is the vertical budget reserved for the transfer
-	// panel ([ui] transfer_panel_height, defaulting to
-	// defaultTransferPanelHeight).
-	transferPanelHeight int
 	size
 }
 
@@ -105,28 +103,21 @@ func NewLazyS3ModelWithConfig(cfg config.Config) Model {
 		objectList.SetSortMode(cfg.UI.DefaultSort, cfg.UI.SortDesc)
 		localList.SetSortMode(cfg.UI.DefaultSort, cfg.UI.SortDesc)
 	}
-	tph := cfg.UI.TransferPanelHeight
-	if tph == 0 {
-		tph = defaultTransferPanelHeight
-	}
-	transferPanel := transferpanel.NewModel()
-	// The panel's frame eats 2 lines and its title 1; the rest is rows.
-	transferPanel.SetMaxVisible(tph - 3)
 	return Model{
-		state:               state.ActiveProfileList,
-		profileList:         profilelist.NewModel(),
-		bucketList:          bucketlist.NewModel(),
-		objectlist:          objectList,
-		previewPanel:        preview.NewPreviewModel(),
-		transferPanel:       transferPanel,
-		modal:               modal.NewModel(),
-		statusBar:           statusbar.NewModel(),
-		help:                help.NewModel(),
-		historyView:         historyview.NewModel(),
-		versionView:         versionview.NewModel(),
-		historyStore:        history.NewStore(history.DefaultPath()),
-		localList:           localList,
-		transferPanelHeight: tph,
+		state:         state.ActiveProfileList,
+		profileList:   profilelist.NewModel(),
+		bucketList:    bucketlist.NewModel(),
+		objectlist:    objectList,
+		previewPanel:  preview.NewPreviewModel(),
+		transferPanel: transferpanel.NewModel(),
+		modal:         modal.NewModel(),
+		statusBar:     statusbar.NewModel(),
+		help:          help.NewModel(),
+		historyView:   historyview.NewModel(),
+		transferView:  transferview.NewModel(),
+		versionView:   versionview.NewModel(),
+		historyStore:  history.NewStore(history.DefaultPath()),
+		localList:     localList,
 	}
 }
 
@@ -141,6 +132,7 @@ func (m Model) Init() tea.Cmd {
 		m.statusBar.Init(),
 		m.help.Init(),
 		m.historyView.Init(),
+		m.transferView.Init(),
 		m.versionView.Init(),
 		m.localList.Init(),
 	)
@@ -205,6 +197,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.historyView.Hide()
 			} else {
 				m.historyView.HandleKey(msg.String())
+			}
+			cmds = append(cmds, m.emitStatusUpdate())
+			return m, tea.Batch(cmds...)
+		}
+		// Transfers overlay: 't'/esc closes, j/k/pgup/pgdown/g/G move the
+		// cursor over the live rows, and 'x' cancels the HIGHLIGHTED
+		// transfer (outside the overlay 'x' keeps its cancel-latest
+		// meaning). Everything else is swallowed. The overlay itself is
+		// stateless about transfers: composeView renders it from the
+		// transferpanel's live rows each frame, so the 200ms tick loop
+		// keeps its progress moving while it is open.
+		if m.transferView.IsVisible() {
+			key := keybinding.KeyString(msg.String())
+			switch {
+			case key == keybinding.TransfersToggle || msg.String() == "esc":
+				m.transferView.Hide()
+			case key == keybinding.TransferCancel:
+				// Clamp the cursor the same way View clamps the highlight:
+				// pruning can shrink the rows between keys, and 'x' must
+				// cancel the row the user SEES highlighted, not no-op.
+				rows := m.transferPanel.Rows()
+				if c := min(m.transferView.Cursor(), len(rows)-1); c >= 0 {
+					if m.transferPanel.CancelByID(rows[c].ID) {
+						log.Println("cancelled transfer:", rows[c].ID)
+					}
+				}
+			default:
+				m.transferView.HandleKey(key, len(m.transferPanel.Rows()))
 			}
 			cmds = append(cmds, m.emitStatusUpdate())
 			return m, tea.Batch(cmds...)
@@ -293,9 +313,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, m.previewCmdForSelection(), m.emitStatusUpdate())
 				return m, tea.Batch(cmds...)
 
-			// t toggles the transfer panel visibility.
-			case "t":
-				m.transferPanel.Toggle()
+			// t opens the live transfers overlay (closing is handled in
+			// the transferView.IsVisible branch above).
+			case keybinding.TransfersToggle:
+				m.transferView.Show()
 				return m, m.emitStatusUpdate()
 
 			// x cancels the most recent running transfer (its context is
@@ -405,7 +426,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// logic stays in one place). Only ActiveObjectList /
 			// ActiveBucketList react to these; the handler returns nil for
 			// other states.
-			case "d", "u", "D", "r", "c", "B", "s", keybinding.PresignYank:
+			case "d", "u", "D", "r", "c", "B", "s", keybinding.YankURI, keybinding.Presign:
 				// In dual mode, 'c' copies across panes and 's' prefills the
 				// sync flow with both pane locations; local focus turns the
 				// remaining remote-only keys into a status-bar hint.
@@ -546,6 +567,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		newHV, cmd := m.historyView.Update(tmsg)
 		m.historyView = newHV
 		cmds = append(cmds, cmd)
+	case bucketlist.FetchBucketListResultMsg:
+		// Routed by TYPE, not by active state: the result of a delayed
+		// refresh (e.g. the re-fetch after make-bucket) can land after the
+		// user already entered a bucket or backed out to the profile list.
+		// The state dispatch below only feeds the ACTIVE list, so without
+		// this the result would be silently dropped on another component,
+		// leaving the bucket list stale and marked loading forever. When
+		// the bucket list IS the active state, the state dispatch below
+		// delivers it exactly as before (no double delivery).
+		if m.state != state.ActiveBucketList {
+			newBL, cmd := m.bucketList.Update(tmsg)
+			m.bucketList = newBL
+			cmds = append(cmds, cmd)
+		}
 	case localFSDoneMsg:
 		// A local rename/mkdir finished: surface a failure, keep the
 		// cursor on the touched entry on success, and refresh the pane
@@ -614,7 +649,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// half-typed input would be silently discarded, and a modal opened
 		// behind a full-screen overlay would swallow keys invisibly): fall
 		// back to a status-bar note — the URL is on the clipboard either way.
-		if m.modal.IsVisible() || m.help.IsVisible() || m.historyView.IsVisible() || m.versionView.IsVisible() {
+		if m.modal.IsVisible() || m.help.IsVisible() || m.historyView.IsVisible() || m.transferView.IsVisible() || m.versionView.IsVisible() {
 			note := fmt.Sprintf("presigned URL for %s copied to clipboard (valid %s)", path.Base(tmsg.Key), tmsg.Expiry)
 			if insecure {
 				note += " — plain HTTP"
@@ -977,23 +1012,16 @@ func (m Model) View() string {
 	return m.composeView(mainContent)
 }
 
-// composeView stacks the main content above the transfer panel and the
-// status bar, then applies the overlay precedence. Shared by the single-
-// and dual-pane branches of View.
+// composeView stacks the main content above the status bar, then applies
+// the overlay precedence (help > history > transfers > versions, modal on
+// top). Shared by the single- and dual-pane branches of View. The lists
+// own every row above the one-line status bar; transfers are ambient in
+// the bar's tallies and on demand in the 't' overlay.
 func (m Model) composeView(mainContent string) string {
-	// Stack the main content above the transfer panel and the status bar
-	// at the bottom. The transfer panel returns "" when hidden and the
-	// status bar always renders one line, so JoinVertical collapses the
-	// transfer panel cleanly when there are no transfers.
-	bottom := lipgloss.JoinVertical(
-		lipgloss.Left,
-		m.transferPanel.View(),
-		m.statusBar.View(),
-	)
 	layout := lipgloss.JoinVertical(
 		lipgloss.Top,
 		mainContent,
-		bottom,
+		m.statusBar.View(),
 	)
 
 	// Help and history are full-canvas overlays (their View() returns a
@@ -1007,11 +1035,15 @@ func (m Model) composeView(mainContent string) string {
 	if m.historyView.IsVisible() {
 		return m.historyView.View()
 	}
-	// The versions overlay is also full-canvas, but the modal outranks it:
-	// a modal opened from an overlay row action (download/restore/delete)
-	// must be the visible, key-receiving surface, floating over the still-
-	// rendered overlay underneath.
-	if m.versionView.IsVisible() {
+	// The transfers and versions overlays are also full-canvas, but the
+	// modal outranks them: a modal opened from an overlay row action (or
+	// landing async, like the presign result) must be the visible, key-
+	// receiving surface, floating over the still-rendered overlay
+	// underneath. The transfers overlay renders from the transferpanel's
+	// live rows, so every tick/progress pass repaints it current.
+	if m.transferView.IsVisible() {
+		layout = m.transferView.View(m.transferPanel.Rows())
+	} else if m.versionView.IsVisible() {
 		layout = m.versionView.View()
 	}
 	// The modal is a floating box composited centered ON TOP of the live

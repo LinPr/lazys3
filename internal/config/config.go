@@ -33,10 +33,14 @@ type Theme struct {
 // UI carries rendering and behavior knobs. NerdFont defaults to false so
 // the default rendering stays byte-identical to the icon-less layout.
 type UI struct {
-	NerdFont            bool   `toml:"nerd_font"`
-	DefaultSort         string `toml:"default_sort"` // "name" | "size" | "time"
-	SortDesc            bool   `toml:"sort_desc"`
-	TransferPanelHeight int    `toml:"transfer_panel_height"` // 4..10; 0 = default
+	NerdFont    bool   `toml:"nerd_font"`
+	DefaultSort string `toml:"default_sort"` // "name" | "size" | "time"
+	SortDesc    bool   `toml:"sort_desc"`
+	// TransferPanelHeight is deprecated: the bottom transfer panel was
+	// replaced by the full-screen transfers overlay ('t'). The key is
+	// still parsed so old config files load without error, but its value
+	// is ignored (sanitize logs and zeroes it).
+	TransferPanelHeight int `toml:"transfer_panel_height"`
 }
 
 // Local configures the dual-pane local filesystem browser.
@@ -50,12 +54,6 @@ type Config struct {
 	UI    UI    `toml:"ui"`
 	Local Local `toml:"local"`
 }
-
-// TransferPanelHeight bounds for [ui] transfer_panel_height.
-const (
-	MinTransferPanelHeight = 4
-	MaxTransferPanelHeight = 10
-)
 
 // Path returns the config file location: $XDG_CONFIG_HOME/lazys3/config.toml,
 // falling back to ~/.config/lazys3/config.toml. Empty when no home dir can
@@ -131,9 +129,8 @@ func (c *Config) sanitize() {
 		log.Printf("config: [ui] default_sort: invalid value %q (want name|size|time), using default", c.UI.DefaultSort)
 		c.UI.DefaultSort = ""
 	}
-	if h := c.UI.TransferPanelHeight; h != 0 && (h < MinTransferPanelHeight || h > MaxTransferPanelHeight) {
-		log.Printf("config: [ui] transfer_panel_height: %d out of range %d..%d, using default",
-			h, MinTransferPanelHeight, MaxTransferPanelHeight)
+	if c.UI.TransferPanelHeight != 0 {
+		log.Printf("config: [ui] transfer_panel_height is deprecated and ignored (transfers moved to the full-screen 't' overlay)")
 		c.UI.TransferPanelHeight = 0
 	}
 	if d := c.Local.StartDir; d != "" {
@@ -176,7 +173,6 @@ const defaultFile = `# lazys3 configuration.
 # nerd_font = false             # render Nerd Font file icons (needs a patched font)
 # default_sort = "name"         # initial sort field: name | size | time
 # sort_desc = false             # sort descending by default
-# transfer_panel_height = 6     # transfer panel rows, 4..10
 
 [local]
 # start_dir = ""                # local pane start directory, "~" ok (default: process cwd)

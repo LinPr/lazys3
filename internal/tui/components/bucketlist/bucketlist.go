@@ -135,16 +135,47 @@ func (m *Model) SetOption(opt *Option) {
 }
 
 func (m *Model) SetBuckets(items []Bucket) {
+	// Snapshot the highlighted bucket NAME before the items are replaced:
+	// a delayed refresh (e.g. the re-fetch after make-bucket) landing
+	// between the user's keystrokes must never move the selection to a
+	// different bucket — the next enter would open (and a queued upload
+	// would write into) whatever row the cursor silently drifted to.
+	var selectedName string
+	if b := m.GetSelectedBucket(); b != nil {
+		selectedName = b.name
+	}
 	listItems := make([]list.Item, 0)
 	for _, b := range items {
 		listItems = append(listItems, b)
 	}
-	m.bucketlist.SetItems(listItems)
+	// While a filter is being typed or applied, bubbles' SetItems nils its
+	// filtered snapshot and returns an ASYNC re-filter cmd. Dropping that
+	// cmd (as a bare SetItems call here did) leaves VisibleItems() empty,
+	// so the next filter-accept enter silently RESETS the filter with the
+	// cursor on the first bucket — the round-3F wrong-bucket upload. Run
+	// the re-filter synchronously (it is pure CPU) and feed the matches
+	// straight back so the typed filter keeps narrowing the new listing.
+	if cmd := m.bucketlist.SetItems(listItems); cmd != nil {
+		if msg := cmd(); msg != nil {
+			m.bucketlist, _ = m.bucketlist.Update(msg)
+		}
+	}
 	// bubbles' SetItems recomputes the page size against the pagination
 	// line's PREVIOUS height, so a listing that crosses the one-page
 	// boundary renders one row too many until the next SetSize. Re-apply
 	// the size to converge (see locallist.setEntries).
 	m.SetSize(m.width, m.height)
+	// Restore the selection by NAME (after SetSize, whose repagination the
+	// index mapping in Select depends on). A vanished name keeps the old
+	// index (clamped by bubbles), matching the previous behavior.
+	if selectedName != "" {
+		for i, it := range m.bucketlist.VisibleItems() {
+			if b, ok := it.(Bucket); ok && b.name == selectedName {
+				m.bucketlist.Select(i)
+				break
+			}
+		}
+	}
 }
 
 // Filtering reports whether the list's filter input is focused. The parent

@@ -49,8 +49,10 @@ start_dir = "` + startDir + `"
 	if cfg.UI.DefaultSort != "size" {
 		t.Errorf("DefaultSort = %q", cfg.UI.DefaultSort)
 	}
-	if cfg.UI.TransferPanelHeight != 8 {
-		t.Errorf("TransferPanelHeight = %d", cfg.UI.TransferPanelHeight)
+	// transfer_panel_height is deprecated: still parsed without error, but
+	// ignored (zeroed) — the transfers view is a full-screen overlay now.
+	if cfg.UI.TransferPanelHeight != 0 {
+		t.Errorf("deprecated TransferPanelHeight should be ignored, got %d", cfg.UI.TransferPanelHeight)
 	}
 	if cfg.Local.StartDir != startDir {
 		t.Errorf("StartDir = %q, want %q", cfg.Local.StartDir, startDir)
@@ -67,10 +69,14 @@ func TestMissingFileWritesDefaultsAndReturnsZero(t *testing.T) {
 	if err != nil {
 		t.Fatalf("default file was not written: %v", err)
 	}
-	for _, want := range []string{"[theme]", "[ui]", "[local]", "nerd_font", "transfer_panel_height", "start_dir"} {
+	for _, want := range []string{"[theme]", "[ui]", "[local]", "nerd_font", "start_dir"} {
 		if !strings.Contains(string(data), want) {
 			t.Errorf("default file should mention %q", want)
 		}
+	}
+	// The deprecated key must not be advertised to new users.
+	if strings.Contains(string(data), "transfer_panel_height") {
+		t.Error("default file should not mention the deprecated transfer_panel_height")
 	}
 	// The written template must itself parse to the zero config (all keys
 	// commented out).
@@ -101,7 +107,7 @@ transfer_panel_height = 42
 		t.Errorf("bad sort should reset, got %q", cfg.UI.DefaultSort)
 	}
 	if cfg.UI.TransferPanelHeight != 0 {
-		t.Errorf("out-of-range panel height should reset, got %d", cfg.UI.TransferPanelHeight)
+		t.Errorf("deprecated panel height should reset, got %d", cfg.UI.TransferPanelHeight)
 	}
 }
 

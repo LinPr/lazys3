@@ -55,12 +55,6 @@ func shouldUsePathStyle(endpointURL string) bool {
 	return true
 }
 
-// defaultTransferPanelHeight is the vertical budget reserved for the
-// transfer panel at the bottom of the TUI when [ui] transfer_panel_height
-// is not configured. The panel's own View() collapses to "" when there are
-// no transfers, so this only kicks in once an op is queued.
-const defaultTransferPanelHeight = 6
-
 // statusBarHeight is the vertical budget reserved for the persistent
 // status bar at the very bottom of the TUI. The bar always renders one
 // line, so this is a constant 1.
@@ -108,23 +102,26 @@ func (m *Model) bucketListOptionFromState() bucketlist.Option {
 	}
 }
 
-// handleFileOp dispatches the file-op keys (d/u/D/r/c/B/s) to the
+// handleFileOp dispatches the file-op keys (d/u/D/r/c/B/s/y/Y) to the
 // appropriate modal flow. The modal's onConfirm callback returns the
 // tea.Cmd that starts the actual operation. Returns nil when the key
 // doesn't apply to the current state (e.g. 'd' has no meaning in
 // ActiveProfileList).
 //
-// Key bindings (Track D's help overlay should list these):
+// Key bindings (the help overlay should list these):
 //   - d: download selected object (ActiveObjectList, file selected)
 //   - u: upload local file to current prefix (ActiveObjectList)
 //   - D: delete selected object(s) / empty bucket (ActiveObjectList /
 //     ActiveBucketList)
 //   - r: rename selected object (copy+delete) (ActiveObjectList, file)
 //   - c: copy selected object to s3://bucket/key (ActiveObjectList, file)
-//   - B: make bucket (ActiveBucketList)
+//   - B: make bucket (ActiveBucketList; in the object list it only hints —
+//     remote "directories" are prefixes that exist through their objects)
 //   - s: sync directory (ActiveObjectList / ActiveBucketList)
-//   - y: presigned share URL for selected object (ActiveObjectList, file)
-//   - t: toggle transfer panel visibility (handled in tui.go)
+//   - y: yank the highlighted item's s3:// URI to the clipboard
+//     (ActiveBucketList / ActiveObjectList)
+//   - Y: presigned share URL for selected object (ActiveObjectList, file)
+//   - t: toggle the transfers overlay (handled in tui.go)
 func (m *Model) handleFileOp(key string) tea.Cmd {
 	switch m.state {
 	case state.ActiveBucketList:
@@ -135,6 +132,8 @@ func (m *Model) handleFileOp(key string) tea.Cmd {
 			return m.promptMakeBucket()
 		case "s":
 			return m.promptSync(m.remoteLocation(), "")
+		case keybinding.YankURI:
+			return m.yankRemoteURI()
 		}
 	case state.ActiveObjectList:
 		switch key {
@@ -148,13 +147,44 @@ func (m *Model) handleFileOp(key string) tea.Cmd {
 			return m.promptRename()
 		case "c":
 			return m.promptCopy()
+		case "B":
+			m.statusBar.SetInfo("B makes buckets (bucket list) / directories (local pane)")
+			return nil
 		case "s":
 			return m.promptSync(m.remoteLocation(), "")
-		case keybinding.PresignYank:
+		case keybinding.YankURI:
+			return m.yankRemoteURI()
+		case keybinding.Presign:
 			return m.promptPresign()
 		}
 	}
 	return nil
+}
+
+// yankRemoteURI ('y' on a remote pane) copies the highlighted item's s3://
+// URI to the system clipboard via OSC52: s3://bucket in the bucket list,
+// s3://bucket/key in the object list (a directory row yields its prefix
+// URI). The dual-pane local mirror is localYankPath.
+func (m *Model) yankRemoteURI() tea.Cmd {
+	var uri string
+	switch m.state {
+	case state.ActiveBucketList:
+		b := m.bucketList.GetSelectedBucket()
+		if b == nil {
+			return nil
+		}
+		uri = "s3://" + b.Title()
+	case state.ActiveObjectList:
+		obj := m.objectlist.GetSelectedObject()
+		if obj == nil {
+			return nil
+		}
+		uri = fmt.Sprintf("s3://%s/%s", m.selectedBucket, obj.Name())
+	default:
+		return nil
+	}
+	m.statusBar.SetInfo("uri copied: " + uri)
+	return tea.SetClipboard(uri)
 }
 
 // promptPresign opens a modal asking for the presigned-URL expiry, then
@@ -573,7 +603,7 @@ func (m *Model) handleBucketStatus(msg versionview.BucketStatusMsg) tea.Cmd {
 	if msg.Err != nil {
 		return errCmd(fmt.Errorf("bucket versioning: %w", msg.Err))
 	}
-	if m.modal.IsVisible() || m.help.IsVisible() || m.historyView.IsVisible() || m.versionView.IsVisible() {
+	if m.modal.IsVisible() || m.help.IsVisible() || m.historyView.IsVisible() || m.transferView.IsVisible() || m.versionView.IsVisible() {
 		m.statusBar.SetInfo(fmt.Sprintf("bucket %s versioning: %s", msg.Bucket, versionview.StatusLabel(msg.Status)))
 		return nil
 	}
@@ -957,19 +987,18 @@ func (m *Model) initComponentsSize(msg tea.WindowSizeMsg) {
 
 	// Lists and the preview panel are sized from the preview panel's
 	// visibility (half width when it is shown). All component sizes are
-	// outer dimensions — borders included — so lists + transfer panel +
-	// status bar stack to exactly the terminal height with no overflow.
+	// outer dimensions — borders included — so lists + status bar stack to
+	// exactly the terminal height with no overflow.
 	m.resizeLists()
 
-	// Transfer panel gets its reserved slice; status bar gets the
-	// remaining 1 row at the very bottom.
-	m.transferPanel.SetSize(m.width, m.effectiveTransferPanelHeight())
+	// The status bar gets the remaining 1 row at the very bottom.
 	m.statusBar.SetSize(m.width, statusBarHeight)
 	m.modal.SetSize(m.width, m.height)
-	// Help and history overlays use the full canvas so they can lay
-	// themselves out over the whole screen.
+	// The full-screen overlays (help, history, transfers, versions) use
+	// the whole canvas so they can lay themselves out over the screen.
 	m.help.SetSize(m.width, m.height)
 	m.historyView.SetSize(m.width, m.height)
+	m.transferView.SetSize(m.width, m.height)
 	m.versionView.SetSize(m.width, m.height)
 }
 
@@ -1134,6 +1163,17 @@ func (m *Model) handleForward(_ tea.Msg) tea.Cmd {
 		m.closePreview()
 
 	case state.ActiveBucketList:
+		// DATA-SAFETY guard: while a bucket-list refresh is in flight the
+		// visible listing is stale — a filter typed against it (e.g. for a
+		// just-created bucket the stale listing doesn't contain) matches
+		// nothing, and bubbles' accept-enter then silently clears the
+		// filter, parking the cursor on the first bucket. Entering it now
+		// would open — and route queued uploads into — a bucket the user
+		// never picked. Refuse the select until the listing is current.
+		if m.bucketList.Loading() {
+			m.statusBar.SetInfo("bucket list is refreshing — try again in a moment")
+			break
+		}
 		cmd := m.handleBucketSelect()
 		cmds = append(cmds, cmd)
 
@@ -1201,26 +1241,12 @@ func (m *Model) handlePreviewToggle() {
 // preview panel's visibility: half width next to a visible preview, full
 // width otherwise. Sizing every list (not just the active one) keeps a
 // list switch from rendering a list whose width was set for the other
-// preview state. The list area always reserves room for the transfer
-// panel and the persistent status bar at the bottom. All sizes are outer
-// dimensions; each component subtracts its own border frame.
-// effectiveTransferPanelHeight clamps the configured panel height against
-// the current terminal height so lists (4 rows minimum), panel and status
-// bar always stack within m.height. On very short terminals the panel
-// shrinks down to a 3-row floor (its View clips itself via MaxHeight).
-func (m *Model) effectiveTransferPanelHeight() int {
-	tph := m.transferPanelHeight
-	if avail := m.height - statusBarHeight - 4; avail < tph {
-		tph = avail
-	}
-	if tph < 3 {
-		tph = 3
-	}
-	return tph
-}
-
+// preview state. The list area always reserves room for the persistent
+// status bar at the bottom (transfers live in the 't' overlay, so the
+// lists own every other row). All sizes are outer dimensions; each
+// component subtracts its own border frame.
 func (m *Model) resizeLists() {
-	listHeight := m.height - m.effectiveTransferPanelHeight() - statusBarHeight
+	listHeight := m.height - statusBarHeight
 	if listHeight < 4 {
 		listHeight = 4
 	}

@@ -2,7 +2,7 @@
 //
 // Keys already claimed by the global dispatcher (tui.go): q, ctrl+c,
 // enter, right, backspace, left, p, t, T, ?, space, a, d, u, D, r, c, B,
-// s, y, v, V, l, tab.
+// s, x, y, Y, v, V, l, tab.
 // The object-list component additionally claims the keys below; they are
 // exported so the help overlay and the component reference one source of
 // truth.
@@ -39,9 +39,19 @@ const (
 	// handled in tui.go).
 	TransferCancel = "x"
 
-	// PresignYank ("yank link") generates a presigned share URL for the
-	// highlighted object (files only).
-	PresignYank = "y"
+	// YankURI ("yank") copies the highlighted item's identifier to the
+	// clipboard: the s3:// URI in the remote panes (bucket or object;
+	// directories yield their prefix URI), the absolute path in the
+	// dual-pane local pane.
+	YankURI = "y"
+
+	// Presign (shift+y) generates a presigned share URL for the
+	// highlighted object (files only, remote pane).
+	Presign = "Y"
+
+	// TransfersToggle opens/closes the live transfers overlay (global,
+	// handled in tui.go).
+	TransfersToggle = "t"
 
 	// HistoryToggle (shift+t) opens/closes the persistent transfer-history
 	// overlay (global, handled in tui.go).

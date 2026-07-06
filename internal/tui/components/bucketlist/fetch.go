@@ -120,6 +120,11 @@ func FetchBucketListCmd(o *Option) tea.Cmd {
 	}
 }
 
+// NewBucket constructs a bucket entry with the given name. Parent-package
+// tests use it to stage a listing without a live fetch (mirroring
+// objectlist.NewFileObject).
+func NewBucket(name string) Bucket { return Bucket{name: name} }
+
 // listBuckets lists the buckets visible to the given client and decorates
 // each with the connection hints from the active Option, so the preview
 // layer can issue follow-up calls (HeadBucket, GetBucketLocation, ...) on

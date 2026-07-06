@@ -219,7 +219,7 @@ func (m *Model) promptLocalMkdir() tea.Cmd {
 
 // localYankPath ('y' with the local pane focused) copies the highlighted
 // entry's absolute path to the system clipboard via OSC52 — the local
-// mirror of the remote presign yank.
+// mirror of the remote s3:// URI yank (yankRemoteURI).
 func (m *Model) localYankPath() tea.Cmd {
 	e := m.localList.GetSelectedEntry()
 	if e == nil {

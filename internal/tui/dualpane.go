@@ -40,7 +40,7 @@ const (
 const minDualPaneWidth = 80
 
 // remotePaneKeyHint is the status-bar nudge shown when a remote-only key
-// (v/V) is pressed while the local pane has focus.
+// (v/V/Y) is pressed while the local pane has focus.
 const remotePaneKeyHint = "remote-pane key — press tab to switch"
 
 // localFocused reports whether the local pane owns list-navigation keys.
@@ -150,7 +150,7 @@ func (m *Model) handleDualFileOp(key string) tea.Cmd {
 			return m.promptLocalRename()
 		case "B":
 			return m.promptLocalMkdir()
-		case keybinding.PresignYank:
+		case keybinding.YankURI:
 			return m.localYankPath()
 		default:
 			m.statusBar.SetInfo(remotePaneKeyHint)

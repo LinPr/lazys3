@@ -1,6 +1,9 @@
-// Package transferpanel renders a compact, always-on panel at the bottom of
-// the TUI that tracks in-flight and recently completed file operations
-// (downloads, uploads, deletes, copies, renames, bucket make/remove).
+// Package transferpanel tracks in-flight and recently completed file
+// operations (downloads, uploads, deletes, copies, renames, bucket
+// make/remove). It is the single transfer-state store: the status bar
+// tallies come from Counts(), and the full-screen transfers overlay
+// (components/transferview, toggled with 't') renders from Rows(). The
+// panel's own compact View is retained but no longer part of the layout.
 //
 // The panel is driven by messages emitted by the file-op tea.Cmds in
 // objectlist/ops.go:
@@ -404,6 +407,38 @@ func (m Model) Status(id string) (Status, bool) {
 		}
 	}
 	return "", false
+}
+
+// Rows returns copies of every tracked transfer, newest first. The
+// transfers overlay (components/transferview) renders from this snapshot
+// each frame, so all messaging/state stays on this model.
+func (m Model) Rows() []Transfer {
+	rows := make([]Transfer, 0, len(m.transfers))
+	for i := len(m.transfers) - 1; i >= 0; i-- {
+		rows = append(rows, m.transfers[i])
+	}
+	return rows
+}
+
+// CancelByID cancels the named transfer if it is still queued/running and
+// carries a cancelable context. Used by the transfers overlay's 'x' on the
+// highlighted row.
+func (m *Model) CancelByID(id string) bool {
+	for i := range m.transfers {
+		t := &m.transfers[i]
+		if t.ID != id {
+			continue
+		}
+		if (t.Status != StatusRunning && t.Status != StatusQueued) || t.Cancel == nil {
+			return false
+		}
+		t.Cancel()
+		t.Cancel = nil
+		t.Status = StatusCanceled
+		t.FinishedAt = time.Now()
+		return true
+	}
+	return false
 }
 
 // CancelLatest cancels the most recently queued/running transfer that has

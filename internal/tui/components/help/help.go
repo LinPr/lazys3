@@ -139,10 +139,12 @@ func (m *Model) SetGroups(groups []Group) { m.groups = groups }
 //
 // Categories:
 //   - Navigation: forward/back/preview toggle
-//   - File Ops:   download/upload/delete/rename/copy/make-bucket/rb/sync
+//   - File Ops:   download/upload/delete/rename/copy/make-bucket/rb/sync/yank/presign
 //   - Selection:  toggle/select-all/clear
-//   - Search:     filter / clear-filter
-//   - Panels:     transfer-panel toggle / help toggle
+//   - Search:     filter / clear-filter / sort
+//   - Dual-pane:  layout toggle / pane focus / cross-pane ops
+//   - Panels & Transfers: transfers overlay / history / cancel / help
+//   - Overlays:   shared scroll and close keys
 //   - Quit:       quit / force-quit
 func DefaultBindings() []Group {
 	return []Group{
@@ -163,9 +165,10 @@ func DefaultBindings() []Group {
 				{Key: "D", Desc: "delete selected object(s) / empty bucket"},
 				{Key: "r", Desc: "rename selected object (copy + delete)"},
 				{Key: "c", Desc: "copy selected object to s3://bucket/key"},
-				{Key: "B", Desc: "make bucket (in bucket list)"},
+				{Key: "B", Desc: "make bucket (bucket list) / make directory (local pane); object list only hints"},
 				{Key: "s", Desc: "sync directory (local ⇄ s3, s3 ⇄ s3)"},
-				{Key: "y", Desc: "generate presigned share URL"},
+				{Key: "y", Desc: "yank s3:// URI of the highlighted bucket/object to the clipboard (local pane: absolute path)"},
+				{Key: "Y", Desc: "generate presigned share URL (remote object files only)"},
 				{Key: "v", Desc: "object versions (download / restore / delete a version)"},
 				{Key: "V", Desc: "toggle bucket versioning (Enabled ⇄ Suspended, in bucket list)"},
 			},
@@ -201,15 +204,25 @@ func DefaultBindings() []Group {
 				{Key: "y", Desc: "local focus: copy the highlighted entry's absolute path to the clipboard"},
 				{Key: "s", Desc: "sync prefilled: focused pane → other pane (editable)"},
 				{Key: "p", Desc: "preview replaces the unfocused pane"},
+				{Key: "Y / v / V", Desc: "remote-pane keys: with local focus they hint to press tab"},
 			},
 		},
 		{
 			Name: "Panels & Transfers",
 			Bindings: []Binding{
-				{Key: "t", Desc: "toggle transfer panel visibility"},
+				{Key: "t", Desc: "toggle the live transfers overlay (newest first, scrollable)"},
 				{Key: "T", Desc: "transfer history (persistent, across sessions)"},
-				{Key: "x", Desc: "cancel the most recent running transfer"},
+				{Key: "x", Desc: "cancel the most recent running transfer (in the transfers overlay: cancel the highlighted one)"},
 				{Key: "?", Desc: "toggle this help overlay"},
+			},
+		},
+		{
+			Name: "Overlays",
+			Bindings: []Binding{
+				{Key: "j / k", Desc: "scroll / move the cursor one row (also ↑/↓)"},
+				{Key: "pgup / pgdn", Desc: "scroll one page"},
+				{Key: "g / G", Desc: "jump to top / bottom (help and transfers overlays)"},
+				{Key: "esc", Desc: "close the overlay (or its toggle key: ? T t v)"},
 			},
 		},
 		{

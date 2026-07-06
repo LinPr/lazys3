@@ -1,3 +1,5 @@
+// Package profilelist renders the AWS shared-config profile picker and
+// loads profiles from ~/.aws/credentials and ~/.aws/config.
 package profilelist
 
 import (
@@ -8,23 +10,32 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	tea "github.com/charmbracelet/bubbletea/v2"
 	"github.com/goccy/go-yaml"
+
+	"github.com/LinPr/lazys3/internal/tui/components/preview"
 )
 
 type Profile struct {
 	name        string
-	EndpointUrl string
+	EndpointURL string
 	config      *config.SharedConfig
 }
 
 func (p Profile) Title() string       { return p.name }
-func (p Profile) Description() string { return p.EndpointUrl }
+func (p Profile) Description() string { return p.EndpointURL }
 func (p Profile) FilterValue() string { return p.name }
 
-func (b Profile) GetPreviewContent() string {
+func (p Profile) GetPreviewContent() string {
 
-	y, _ := yaml.Marshal(b.config)
+	y, _ := yaml.Marshal(p.config)
 	return string(y)
-	// return "fjdakfda"
+}
+
+// GetPreviewRequest returns nil because profiles do not need a live S3
+// fetch — their preview content is the YAML dump from the shared config,
+// produced synchronously by GetPreviewContent. The preview component
+// checks for nil and skips the async fetch path.
+func (p Profile) GetPreviewRequest() *preview.PreviewRequest {
+	return nil
 }
 
 type ReadAwsConfigResult struct {
@@ -42,7 +53,7 @@ func ReadAwsConfigProfileListCmd() tea.Cmd {
 		for _, config := range configs {
 			profiles = append(profiles, Profile{
 				name:        config.Profile,
-				EndpointUrl: config.BaseEndpoint,
+				EndpointURL: config.BaseEndpoint,
 				config:      &config,
 			})
 		}

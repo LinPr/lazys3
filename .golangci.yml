@@ -1,0 +1,29 @@
+# .golangci.yml — minimal linter config for lazys3 (golangci-lint v2 format).
+version: "2"
+
+linters:
+  enable:
+    - govet
+    - errcheck
+    - staticcheck
+    - ineffassign
+    - unused
+  settings:
+    errcheck:
+      # Allow fmt.{Fprint,Println,Printf,Print} since the TUI code base
+      # uses them liberably for debug logs.
+      exclude-functions:
+        - (*github.com/charmbracelet/bubbletea/v2.Model).Update
+    staticcheck:
+      checks: ["all"]
+
+issues:
+  # Don't auto-exclude common patterns; surface everything so we can
+  # decide what to silence.
+  exclude-use-default: false
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+run:
+  timeout: 5m
+  tests: true

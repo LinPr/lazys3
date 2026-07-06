@@ -1,3 +1,4 @@
+// Package style holds shared lipgloss styles for the TUI lists and panels.
 package style
 
 import (

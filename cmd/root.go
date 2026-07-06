@@ -1,3 +1,4 @@
+// Package cmd wires the lazys3 cobra entry point to the TUI.
 package cmd
 
 import (
@@ -11,6 +12,7 @@ import (
 )
 
 type Options struct {
+	Debug bool
 }
 
 func NewRootCmd() *cobra.Command {
@@ -36,6 +38,8 @@ func NewRootCmd() *cobra.Command {
 		},
 	}
 
+	cmd.PersistentFlags().BoolVar(&o.Debug, "debug", false, "Enable debug mode")
+
 	return cmd
 }
 
@@ -48,6 +52,9 @@ func (o *Options) Validate() error {
 }
 
 func (o *Options) Run() error {
+	cleanup := logInit(o.Debug)
+	defer cleanup()
+
 	model := tui.NewLazyS3Model()
 	p := tea.NewProgram(
 		model,
@@ -63,16 +70,32 @@ func (o *Options) Run() error {
 }
 
 func Execute() {
-	f, err := tea.LogToFile("debug.log", "debug")
-	if err != nil {
-		fmt.Println("Error creating log file:", err)
-		os.Exit(1)
-	}
-	defer f.Close()
-
 	rootCmd := NewRootCmd()
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
+}
+
+// logInit redirects the standard logger's output to a debug log file when
+// debug is true, or to /dev/null otherwise. It returns a cleanup function
+// the caller must defer-close after the program is done, so the file handle
+// stays open for the program's lifetime (closing it on return from logInit
+// would discard every log line emitted afterwards).
+func logInit(debug bool) func() {
+	if debug {
+		f, err := tea.LogToFile("debug.log", "debug")
+		if err != nil {
+			fmt.Println("Error creating log file:", err)
+			os.Exit(1)
+		}
+		return func() { _ = f.Close() }
+	}
+
+	f, err := tea.LogToFile("/dev/null", "debug")
+	if err != nil {
+		fmt.Println("Error creating log file:", err)
+		os.Exit(1)
+	}
+	return func() { _ = f.Close() }
 }

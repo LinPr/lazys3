@@ -1,3 +1,4 @@
+// Package fsstore implements the local-filesystem Storage backend.
 package fsstore
 
 import (

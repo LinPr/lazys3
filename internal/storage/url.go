@@ -1,4 +1,4 @@
-// Package url abstracts local and remote file StorageURLs.
+// Package storage abstracts local and remote file StorageURLs.
 package storage
 
 import (
@@ -74,7 +74,7 @@ func WithAllVersions(isAllVersions bool) Option {
 	}
 }
 
-// New creates a new StorageURL from given path string.
+// NewStorageURL creates a new StorageURL from given path string.
 func NewStorageURL(s string, opts ...Option) (*StorageURL, error) {
 	scheme, rest, isFound := strings.Cut(s, "://")
 	if !isFound {
@@ -372,9 +372,9 @@ func (u StorageURL) MarshalJSON() ([]byte, error) {
 func (u StorageURL) ToBytes() []byte {
 	buf := bytes.NewBuffer(make([]byte, 0))
 	enc := gob.NewEncoder(buf)
-	enc.Encode(u.Absolute())
-	enc.Encode(u.relativePath)
-	enc.Encode(u.raw)
+	_ = enc.Encode(u.Absolute())
+	_ = enc.Encode(u.relativePath)
+	_ = enc.Encode(u.raw)
 	return buf.Bytes()
 }
 
@@ -466,20 +466,4 @@ func (u *StorageURL) EscapedPath() string {
 	}
 
 	return strings.Join(sourceKeyElements, "/") // nosem - silence semgrep's "use path.Join" error
-}
-
-// check if all fields of StorageURL equal
-func (u *StorageURL) deepEqual(url *StorageURL) bool {
-	if url.Absolute() != u.Absolute() ||
-		url.Type != u.Type ||
-		url.Scheme != u.Scheme ||
-		url.Bucket != u.Bucket ||
-		url.Delimiter != u.Delimiter ||
-		url.Path != u.Path ||
-		url.Prefix != u.Prefix ||
-		url.relativePath != u.relativePath ||
-		url.filter != u.filter {
-		return false
-	}
-	return true
 }

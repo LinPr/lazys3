@@ -62,12 +62,23 @@ func (s3store *S3Store) BucketExists(ctx context.Context, bucketName string) (bo
 }
 
 func (s3store *S3Store) CreateBucket(ctx context.Context, name string, region string) error {
-	_, err := s3store.client.CreateBucket(ctx, &s3.CreateBucketInput{
+	if s3store.dryRun {
+		return nil
+	}
+	input := &s3.CreateBucketInput{
 		Bucket: aws.String(name),
-		CreateBucketConfiguration: &types.CreateBucketConfiguration{
+	}
+	// Aliyun OSS (and several other S3-compatible services) reject a
+	// CreateBucketConfiguration whose LocationConstraint does not match
+	// the endpoint's region. Only attach the constraint when the caller
+	// actually supplied a region; passing "" sends an empty constraint
+	// which OSS also rejects. Empty region => omit the field entirely.
+	if region != "" {
+		input.CreateBucketConfiguration = &types.CreateBucketConfiguration{
 			LocationConstraint: types.BucketLocationConstraint(region),
-		},
-	})
+		}
+	}
+	_, err := s3store.client.CreateBucket(ctx, input)
 	if err != nil {
 		var owned *types.BucketAlreadyOwnedByYou
 		var exists *types.BucketAlreadyExists
@@ -87,6 +98,9 @@ func (s3store *S3Store) CreateBucket(ctx context.Context, name string, region st
 
 // DeleteBucket deletes a bucket. The bucket must be empty or an error is returned.
 func (s3store *S3Store) DeleteBucket(ctx context.Context, bucketName string) error {
+	if s3store.dryRun {
+		return nil
+	}
 	_, err := s3store.client.DeleteBucket(ctx, &s3.DeleteBucketInput{
 		Bucket: aws.String(bucketName)})
 	if err != nil {

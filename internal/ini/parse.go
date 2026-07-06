@@ -100,7 +100,7 @@ func (p *parser) handleContinuation(tok *lineTokenContinuation) {
 		return
 	}
 
-	value, _ := p.sections.container[p.csection].values[p.ckey]
+	value := p.sections.container[p.csection].values[p.ckey]
 	if value.str != "" && value.mp == nil {
 		value.str = fmt.Sprintf("%s\n%s", value.str, tok.Value)
 	}

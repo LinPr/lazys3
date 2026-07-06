@@ -1,3 +1,5 @@
+// Package strutil provides small string utilities (humanised bytes,
+// wildcard→regex, JSON helpers) used across the storage and TUI layers.
 package strutil
 
 import (
@@ -63,8 +65,8 @@ func AddNewLineFlag(pattern string) string {
 // WildCardToRegexp converts a wildcarded expresiion to equivalent regular expression
 func WildCardToRegexp(pattern string) string {
 	patternRegex := regexp.QuoteMeta(pattern)
-	patternRegex = strings.Replace(patternRegex, "\\?", ".", -1)
-	return strings.Replace(patternRegex, "\\*", ".*", -1)
+	patternRegex = strings.ReplaceAll(patternRegex, "\\?", ".")
+	return strings.ReplaceAll(patternRegex, "\\*", ".*")
 }
 
 // MatchFromStartToEnd enforces that the regex will match the full string

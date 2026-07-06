@@ -6,7 +6,7 @@ silent: true
 tasks:
   default:
     cmds:
-      - ./lazys3
+      - ./lazys3 --debug
     interactive: true
     desc: Run
     deps:
@@ -32,14 +32,29 @@ tasks:
       GOEXPERIMENT: null
 
   test:
+    desc: Run unit tests (alias for test-unit)
+    deps:
+      - test-unit
+
+  test-unit:
     cmds:
-      - go test -v ./...
-    desc: Run tests
+      - go test -v $(go list ./... | grep -v /e2e)
+    desc: Run unit tests (excludes e2e package)
+
+  test-e2e:
+    cmds:
+      - go test -v -tags=e2e ./e2e/...
+    desc: Run e2e tests against in-process gofakes3
+
+  test-e2e-real:
+    desc: Run e2e tests against a real S3-compatible service via a shared config profile
+    cmds:
+      - LAZYS3_E2E_REAL=oss go test -v -tags=e2e ./e2e/...
 
   fmt:
-    desc: Run gofumpt
+    desc: Run go fmt
     cmds:
-      - gofumpt -w $(git ls-files '*.go')
+      - go fmt ./...
 
   check-nerd-font:
     cmds:

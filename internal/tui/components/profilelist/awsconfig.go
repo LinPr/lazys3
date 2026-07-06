@@ -1,35 +1,18 @@
+// Package profilelist renders the AWS shared-config profile picker and
+// loads profiles from ~/.aws/credentials and ~/.aws/config.
 package profilelist
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
 	"os/user"
 	"path/filepath"
-	"strings"
 
 	"github.com/LinPr/lazys3/internal/ini"
 )
 
 const (
-	// Prefix to use for filtering profiles. The profile prefix should only
-	// exist in the shared config file, not the credentials file.
-	profilePrefix = `profile `
-
-	// Prefix to be used for SSO sections. These are supposed to only exist in
-	// the shared config file, not the credentials file.
-	ssoSectionPrefix = `sso-session `
-
-	// Prefix for services section. It is referenced in profile via the services
-	// parameter to configure clients for service-specific parameters.
-	servicesPrefix = `services `
-
-	// string equivalent for boolean
-	endpointDiscoveryDisabled = `false`
-	endpointDiscoveryEnabled  = `true`
-	endpointDiscoveryAuto     = `auto`
-
 	// Static Credentials group
 	accessKeyIDKey  = `aws_access_key_id`     // group required
 	secretAccessKey = `aws_secret_access_key` // group required
@@ -77,11 +60,6 @@ const (
 	// Use DualStack Endpoint Resolution
 	useDualStackEndpoint = "use_dualstack_endpoint"
 
-	// DefaultSharedConfigProfile is the default profile to be used when
-	// loading configuration from the config files if another profile name
-	// is not provided.
-	DefaultSharedConfigProfile = `default`
-
 	// S3 Disable Multi-Region AccessPoints
 	s3DisableMultiRegionAccessPointsKey = `s3_disable_multiregion_access_points`
 
@@ -95,32 +73,8 @@ const (
 
 	caBundleKey = "ca_bundle"
 
-	sdkAppID = "sdk_ua_app_id"
-
-	ignoreConfiguredEndpoints = "ignore_configured_endpoint_urls"
-
-	endpointURL = "endpoint_url"
-
-	servicesSectionKey = "services"
-
-	disableRequestCompression      = "disable_request_compression"
-	requestMinCompressionSizeBytes = "request_min_compression_size_bytes"
-
-	s3DisableExpressSessionAuthKey = "s3_disable_express_session_auth"
-
-	accountIDKey          = "aws_account_id"
-	accountIDEndpointMode = "account_id_endpoint_mode"
-
-	requestChecksumCalculationKey = "request_checksum_calculation"
-	responseChecksumValidationKey = "response_checksum_validation"
-	checksumWhenSupported         = "when_supported"
-	checksumWhenRequired          = "when_required"
-
 	authSchemePreferenceKey = "auth_scheme_preference"
 )
-
-// defaultSharedConfigProfile allows for swapping the default profile for testing
-var defaultSharedConfigProfile = "default"
 
 // DefaultSharedCredentialsFilename returns the SDK's default file path
 // for the shared credentials file.
@@ -139,7 +93,7 @@ func DefaultSharedCredentialsFilename() string {
 // Builds the shared config file path based on the OS's platform.
 //
 //   - Linux/Unix: $HOME/.aws/config
-//   - Windows: %USERPROFILE%\.aws\config
+//   - Windows: %USERPROFILE%\.aws/config
 func DefaultSharedConfigFilename() string {
 	return filepath.Join(SharedConfigFilename())
 }
@@ -162,7 +116,7 @@ var DefaultSharedCredentialsFiles = []string{
 // Builds the shared config file path based on the OS's platform.
 //
 //   - Linux/Unix: $HOME/.aws/credentials
-//   - Windows: %USERPROFILE%\.aws\credentials
+//   - Windows: %USERPROFILE%\.aws/credentials
 func SharedCredentialsFilename() string {
 	return filepath.Join(UserHomeDir(), ".aws", "credentials")
 }
@@ -173,7 +127,7 @@ func SharedCredentialsFilename() string {
 // Builds the shared config file path based on the OS's platform.
 //
 //   - Linux/Unix: $HOME/.aws/config
-//   - Windows: %USERPROFILE%\.aws\config
+//   - Windows: %USERPROFILE%\.aws/config
 func SharedConfigFilename() string {
 	return filepath.Join(UserHomeDir(), ".aws", "config")
 }
@@ -248,92 +202,6 @@ func loadIniFiles(filenames []string) (ini.Sections, error) {
 	return mergedSections, nil
 }
 
-func processConfigSections(ctx context.Context, sections *ini.Sections) error {
-	skipSections := map[string]struct{}{}
-
-	for _, section := range sections.List() {
-		if _, ok := skipSections[section]; ok {
-			continue
-		}
-
-		// drop sections from config file that do not have expected prefixes.
-		switch {
-		case strings.HasPrefix(section, profilePrefix):
-			// Rename sections to remove "profile " prefixing to match with
-			// credentials file. If default is already present, it will be
-			// dropped.
-			newName, err := renameProfileSection(section, sections)
-			if err != nil {
-				return fmt.Errorf("failed to rename profile section, %w", err)
-			}
-			skipSections[newName] = struct{}{}
-
-		case strings.HasPrefix(section, ssoSectionPrefix):
-		case strings.HasPrefix(section, servicesPrefix):
-		case strings.EqualFold(section, "default"):
-		default:
-			// drop this section, as invalid profile name
-			sections.DeleteSection(section)
-
-			// if logger != nil {
-			// 	logger.Logf(logging.Debug, "A profile defined with name `%v` is ignored. "+
-			// 		"For use within a shared configuration file, "+
-			// 		"a non-default profile must have `profile ` "+
-			// 		"prefixed to the profile name.",
-			// 		section,
-			// 	)
-			// }
-		}
-	}
-	return nil
-}
-
-func processCredentialsSections(ctx context.Context, sections *ini.Sections) error {
-	for _, section := range sections.List() {
-		// drop profiles with prefix for credential files
-		if strings.HasPrefix(section, profilePrefix) {
-			// drop this section, as invalid profile name
-			sections.DeleteSection(section)
-
-			// if logger != nil {
-			// logger.Logf(logging.Debug,
-			// 	"The profile defined with name `%v` is ignored. A profile with the `profile ` prefix is invalid "+
-			// 		"for the shared credentials file.\n",
-			// 	section,
-			// )
-			// }
-		}
-	}
-	return nil
-}
-
-func renameProfileSection(section string, sections *ini.Sections) (string, error) {
-	v, ok := sections.GetSection(section)
-	if !ok {
-		return "", fmt.Errorf("error processing profiles within the shared configuration files")
-	}
-
-	// delete section with profile as prefix
-	sections.DeleteSection(section)
-
-	// set the value to non-prefixed name in sections.
-	section = strings.TrimPrefix(section, profilePrefix)
-	if sections.HasSection(section) {
-		oldSection, _ := sections.GetSection(section)
-		v.Logs = append(v.Logs,
-			fmt.Sprintf("A non-default profile not prefixed with `profile ` found in %s, "+
-				"overriding non-default profile from %s",
-				v.SourceFile, oldSection.SourceFile))
-		sections.DeleteSection(section)
-	}
-
-	// assign non-prefixed name to section
-	v.Name = section
-	sections.SetSection(section, v)
-
-	return section, nil
-}
-
 // mergeSections merges source section properties into destination section properties
 func mergeSections(dst *ini.Sections, src ini.Sections) error {
 	for _, sectionName := range src.List() {
@@ -371,14 +239,14 @@ func mergeSections(dst *ini.Sections, src ini.Sections) error {
 			if err != nil {
 				return fmt.Errorf("error merging access key, %w", err)
 			}
-			dstSection.UpdateValue(accessKeyIDKey, v)
+			dstSection.UpdateValue(accessKeyIDKey, v) //nolint:errcheck // best-effort merge; errors surfaced via Logs
 
 			// update secret key
 			v, err = ini.NewStringValue(secretKey)
 			if err != nil {
 				return fmt.Errorf("error merging secret key, %w", err)
 			}
-			dstSection.UpdateValue(secretAccessKey, v)
+			dstSection.UpdateValue(secretAccessKey, v) //nolint:errcheck // best-effort merge; errors surfaced via Logs
 
 			// update session token
 			if err = mergeStringKey(&srcSection, &dstSection, sectionName, sessionTokenKey); err != nil {
@@ -454,7 +322,7 @@ func mergeStringKey(srcSection *ini.Section, dstSection *ini.Section, sectionNam
 				dstSection.SourceFile[key], srcSection.SourceFile[key]))
 		}
 
-		dstSection.UpdateValue(key, val)
+		dstSection.UpdateValue(key, val) //nolint:errcheck // best-effort merge; errors surfaced via Logs
 		dstSection.UpdateSourceFile(key, srcSection.SourceFile[key])
 	}
 	return nil

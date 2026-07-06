@@ -198,6 +198,13 @@ func (m *Model) SetObjects(items []Object) {
 	m.objectlist.ResetFilter()
 	sortObjects(m.objects, m.sortBy, m.sortDesc)
 	m.objectlist.SetItems(m.listItems())
+	// bubbles' SetItems recomputes the page size against the pagination
+	// line's PREVIOUS height (updatePagination subtracts it before
+	// SetTotalPages runs), so a listing that crosses the one-page boundary
+	// renders one row too many — the pane draws a line taller than its box
+	// until the next SetSize. Re-apply the size to converge (through the
+	// component SetSize, which also restores the narrowed help budget).
+	m.SetSize(m.width, m.height)
 	m.objectlist.ResetSelected()
 	if m.pendingRestore != "" && len(m.objects) > 0 {
 		if idx, ok := m.posMemo[m.pendingRestore]; ok {

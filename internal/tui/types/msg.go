@@ -49,15 +49,33 @@ type ShowInputModalMsg struct {
 }
 
 // StatusUpdateMsg refreshes the persistent status bar with the current
-// navigation context (profile, s3://bucket/prefix) and the multi-select
-// count. The TUI's Update emits this after dispatching to the active list
-// so the bar always reflects the post-update state.
+// navigation context, the focused pane, the multi-select count and the
+// transfer-row tallies. The TUI's Update emits this after dispatching to
+// the active list so the bar always reflects the post-update state; it is
+// deduplicated against the previous emission, so every field except
+// ClearInfo participates in change detection.
 //
 // Track D owns this message type; the statusbar component is the only
 // consumer.
 type StatusUpdateMsg struct {
-	Profile       string
-	Bucket        string
-	Prefix        string
+	Profile string
+	Bucket  string
+	Prefix  string
+	// SelectedCount mirrors the FOCUSED pane's multi-selection in dual
+	// mode (the local pane's when it is focused).
 	SelectedCount int
+	// Pane names the focused pane while dual-pane mode is active
+	// ("local" / "remote"); empty in single-pane mode.
+	Pane string
+	// Transfer-row tallies from transferpanel.Counts: running includes
+	// queued rows, failed includes canceled ones.
+	TransfersRunning int
+	TransfersDone    int
+	TransfersFailed  int
+	// ClearInfo dismisses the bar's transient info note. emitStatusUpdate
+	// sets it only when a navigation-ish field (profile/bucket/prefix/
+	// selection/pane) changed, so a background transfer finishing never
+	// wipes a note the user is still reading. Set AFTER the dedup
+	// snapshot, so it never participates in change detection.
+	ClearInfo bool
 }

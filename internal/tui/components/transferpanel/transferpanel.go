@@ -435,6 +435,22 @@ func (m Model) Active() []Transfer {
 	return active
 }
 
+// Counts tallies the panel's rows for the status bar's transfer summary:
+// running includes queued rows, failed includes canceled ones.
+func (m Model) Counts() (running, done, failed int) {
+	for _, t := range m.transfers {
+		switch t.Status {
+		case StatusRunning, StatusQueued:
+			running++
+		case StatusDone:
+			done++
+		case StatusFailed, StatusCanceled:
+			failed++
+		}
+	}
+	return running, done, failed
+}
+
 // CancelAll cancels every outstanding transfer context. Called on quit so
 // no goroutine outlives the TUI.
 func (m *Model) CancelAll() {

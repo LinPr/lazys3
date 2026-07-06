@@ -2,6 +2,7 @@ package locallist
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/LinPr/lazys3/internal/tui/types"
 	"github.com/charmbracelet/bubbles/v2/list"
 	tea "github.com/charmbracelet/bubbletea/v2"
+	"github.com/charmbracelet/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -276,24 +278,24 @@ func TestUpStopsAtRoot(t *testing.T) {
 	}
 }
 
-func TestEnsureLoadedOnce(t *testing.T) {
+func TestResetToStartDirWithoutStartDirFallsBack(t *testing.T) {
 	m := NewModel()
-	if cmd := m.EnsureLoaded(); cmd == nil {
-		t.Fatal("first EnsureLoaded should return a fetch cmd")
-	}
-	m = load(t, m, sampleDir(t))
-	if cmd := m.EnsureLoaded(); cmd != nil {
-		t.Error("EnsureLoaded after a successful load should return nil")
+	if cmd := m.ResetToStartDir(); cmd == nil {
+		t.Fatal("ResetToStartDir without a start dir should still return a fetch cmd (home fallback)")
 	}
 }
 
-func TestEnsureLoadedUsesStartDir(t *testing.T) {
-	dir := sampleDir(t)
+// TestResetToStartDirAlwaysFetchesStartDir pins the close→reopen reset:
+// the fetch targets the start dir even after navigating elsewhere, and the
+// selection is cleared up front.
+func TestResetToStartDirAlwaysFetchesStartDir(t *testing.T) {
+	start := sampleDir(t)
 	m := NewModel()
-	m.SetStartDir(dir)
-	cmd := m.EnsureLoaded()
+	m.SetSize(80, 20)
+	m.SetStartDir(start)
+	cmd := m.ResetToStartDir()
 	if cmd == nil {
-		t.Fatal("first EnsureLoaded should return a fetch cmd")
+		t.Fatal("first ResetToStartDir should return a fetch cmd")
 	}
 	msg, ok := cmd().(LoadedMsg)
 	if !ok {
@@ -302,8 +304,95 @@ func TestEnsureLoadedUsesStartDir(t *testing.T) {
 	if msg.Err != nil {
 		t.Fatal(msg.Err)
 	}
-	if msg.Dir != dir {
-		t.Fatalf("first fetch dir = %q, want the start dir %q", msg.Dir, dir)
+	if msg.Dir != start {
+		t.Fatalf("first fetch dir = %q, want the start dir %q", msg.Dir, start)
+	}
+
+	// Navigate elsewhere and mark an entry: the next reset re-fetches the
+	// start dir and drops the selection immediately.
+	other := t.TempDir()
+	if err := os.WriteFile(filepath.Join(other, "x.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m = load(t, m, other)
+	m.ToggleSelected()
+	if m.SelectedCount() != 1 {
+		t.Fatal("selection setup failed")
+	}
+	cmd = m.ResetToStartDir()
+	if cmd == nil {
+		t.Fatal("ResetToStartDir after navigation should re-fetch the start dir")
+	}
+	if m.SelectedCount() != 0 {
+		t.Fatalf("selection = %d after reset, want 0", m.SelectedCount())
+	}
+	msg = cmd().(LoadedMsg)
+	if msg.Dir != start {
+		t.Fatalf("re-fetch dir = %q, want the start dir %q", msg.Dir, start)
+	}
+}
+
+// TestStaleLoadedMsgDroppedAfterReset is the regression for the fetch-
+// generation guard: an Enter fetch still in flight when ResetToStartDir
+// re-arms the start dir must not commit its directory when its LoadedMsg
+// lands after the reset's (bubbletea runs both cmds concurrently, so a
+// slow read can finish last).
+func TestStaleLoadedMsgDroppedAfterReset(t *testing.T) {
+	start := t.TempDir()
+	if err := os.Mkdir(filepath.Join(start, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	m := NewModel()
+	m.SetSize(80, 20)
+	m.SetStartDir(start)
+	m, _ = m.Update(m.ResetToStartDir()())
+	if m.Dir() != start {
+		t.Fatalf("Dir() = %q after the first load, want %q", m.Dir(), start)
+	}
+
+	// Arm the slow navigation (the cursor sits on "sub/", the only
+	// entry), then reset before it lands.
+	slow := m.Enter()
+	if slow == nil {
+		t.Fatal("Enter did not arm a fetch")
+	}
+	m, _ = m.Update(m.ResetToStartDir()())
+	if m.Dir() != start {
+		t.Fatalf("Dir() = %q after the reset load, want %q", m.Dir(), start)
+	}
+	m, _ = m.Update(slow())
+	if m.Dir() != start {
+		t.Fatalf("Dir() = %q after the stale LoadedMsg, want %q (superseded fetch committed)", m.Dir(), start)
+	}
+	if m.Loading() {
+		t.Error("Loading() still true after the current-generation load committed")
+	}
+
+	// A bare FetchDirCmd (Gen 0, the unguarded external path used by
+	// tests and refresh hooks) is still accepted.
+	m = load(t, m, filepath.Join(start, "sub"))
+	if m.Dir() != filepath.Join(start, "sub") {
+		t.Fatalf("Dir() = %q after an unguarded load, want the sub dir", m.Dir())
+	}
+}
+
+// TestViewHeightStableAfterMultiPageLoad is the regression for the dual-
+// pane height mismatch: committing a listing that spans more than one page
+// must not grow the rendered pane past the height from SetSize (bubbles'
+// SetItems computes the page size against the pagination line's previous
+// height; setEntries re-applies the size to converge).
+func TestViewHeightStableAfterMultiPageLoad(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i < 40; i++ {
+		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("f%02d.txt", i)), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m := NewModel()
+	m.SetSize(50, 24)
+	m = load(t, m, dir)
+	if h := lipgloss.Height(m.View()); h != 24 {
+		t.Fatalf("View height = %d after a multi-page load, want 24", h)
 	}
 }
 

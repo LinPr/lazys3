@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -18,8 +20,11 @@ import (
 )
 
 // dualModel returns a model sized wide enough for dual-pane mode with the
-// mode already entered (EnsureLoaded's cwd fetch cmd is dropped) and the
-// local pane committed to a temp dir containing files.
+// mode already entered (ResetToStartDir's start-dir fetch cmd is dropped)
+// and the local pane committed to a temp dir containing files. Entering
+// focuses the LOCAL pane (pinned by TestEnterDualPaneFocusesLocalAtStartDir);
+// the helper tabs back to the remote pane so the tests keep the remote-
+// first tab choreography they were written with.
 func dualModel(t *testing.T, files ...string) (Model, string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -34,8 +39,12 @@ func dualModel(t *testing.T, files ...string) (Model, string) {
 	if !m.dualPane {
 		t.Fatal("'l' did not enter dual-pane mode at 100 cols")
 	}
+	if m.paneFocus != focusLocal {
+		t.Fatal("entering dual-pane did not focus the local pane")
+	}
+	m = updateModel(t, m, tabPress())
 	// Commit the temp dir as the local pane's listing (bypassing the
-	// EnsureLoaded cwd fetch).
+	// dropped start-dir fetch).
 	m = updateModel(t, m, locallist.FetchDirCmd(dir)())
 	if m.localList.Dir() != dir {
 		t.Fatalf("local dir = %q, want %q", m.localList.Dir(), dir)
@@ -93,14 +102,16 @@ func TestDualPaneRefusedWhenNarrow(t *testing.T) {
 }
 
 // TestDualPaneToggleAndAutoExit pins 'l' enter/exit and the auto-exit on a
-// narrow resize while dual mode is active.
+// narrow resize while dual mode is active. (Entry focus — local pane — is
+// pinned by TestEnterDualPaneFocusesLocalAtStartDir; dualModel tabs back
+// to the remote pane.)
 func TestDualPaneToggleAndAutoExit(t *testing.T) {
 	m, _ := dualModel(t, "a.txt")
 	if m.paneFocus != focusRemote {
-		t.Fatal("dual-pane did not start on the remote pane")
+		t.Fatal("dualModel did not normalize focus to the remote pane")
 	}
 	if m.localList.Focused() {
-		t.Fatal("local pane focused on entry")
+		t.Fatal("local pane focused after the helper's tab")
 	}
 
 	// 'l' again exits.
@@ -679,6 +690,218 @@ func TestStatusBarCountsFocusedPane(t *testing.T) {
 	m = updateModel(t, m, tabPress())
 	if m.lastStatus.SelectedCount != 0 {
 		t.Fatalf("status count = %d with remote focus, want 0", m.lastStatus.SelectedCount)
+	}
+}
+
+// findLoaded executes a cmd tree and returns the locallist.LoadedMsg it
+// produced, failing the test when there is none.
+func findLoaded(t *testing.T, cmd tea.Cmd) locallist.LoadedMsg {
+	t.Helper()
+	for _, msg := range collectMsgs(cmd) {
+		if lm, ok := msg.(locallist.LoadedMsg); ok {
+			return lm
+		}
+	}
+	t.Fatal("no locallist.LoadedMsg produced")
+	return locallist.LoadedMsg{}
+}
+
+// assertSameDir compares two paths after resolving symlinks (t.TempDir may
+// sit behind one, e.g. on macOS).
+func assertSameDir(t *testing.T, got, want string) {
+	t.Helper()
+	g, err := filepath.EvalSymlinks(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := filepath.EvalSymlinks(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g != w {
+		t.Fatalf("dir = %q, want %q", g, w)
+	}
+}
+
+// TestEnterDualPaneFocusesLocalAtStartDir pins the 'l' entry behavior:
+// the local pane opens FOCUSED and ALWAYS at the start directory —
+// navigation within an open session persists, but close→reopen resets the
+// directory and clears the selection.
+func TestEnterDualPaneFocusesLocalAtStartDir(t *testing.T) {
+	start := t.TempDir()
+	if err := os.WriteFile(filepath.Join(start, "home.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(start)
+	m := NewLazyS3Model()
+	m = updateModel(t, m, tea.WindowSizeMsg{Width: 100, Height: 30})
+
+	nm, cmd := m.Update(keyPress('l'))
+	m = nm.(Model)
+	if !m.dualPane || m.paneFocus != focusLocal || !m.localList.Focused() {
+		t.Fatal("'l' did not enter dual-pane mode focused on the local pane")
+	}
+	m = updateModel(t, m, findLoaded(t, cmd))
+	assertSameDir(t, m.localList.Dir(), start)
+
+	// Navigate elsewhere and mark an entry: within the open session the
+	// directory persists.
+	other := t.TempDir()
+	if err := os.WriteFile(filepath.Join(other, "x.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m = updateModel(t, m, locallist.FetchDirCmd(other)())
+	assertSameDir(t, m.localList.Dir(), other)
+	m.localList.ToggleSelected()
+	if m.localList.SelectedCount() != 1 {
+		t.Fatal("selection setup failed")
+	}
+
+	// Close and reopen: focus is local again and the pane reloads the
+	// start dir with a clean selection.
+	m = updateModel(t, m, keyPress('l'))
+	nm, cmd = m.Update(keyPress('l'))
+	m = nm.(Model)
+	if m.paneFocus != focusLocal || !m.localList.Focused() {
+		t.Fatal("re-entering dual-pane did not focus the local pane")
+	}
+	loaded := findLoaded(t, cmd)
+	assertSameDir(t, loaded.Dir, start)
+	m = updateModel(t, m, loaded)
+	assertSameDir(t, m.localList.Dir(), start)
+	if m.localList.SelectedCount() != 0 {
+		t.Fatalf("selection = %d after reopen, want 0", m.localList.SelectedCount())
+	}
+}
+
+// TestDualPaneHeightsMatchOnEntry is the regression for the entry-layout
+// mismatch: on a fresh session, 'l' alone (no tab, no extra resize) must
+// render both panes at equal heights and complementary widths, even when
+// the local listing spans more than one page (bubbles' SetItems used to
+// compute the page size against the pagination line's stale height, making
+// the local pane one line taller than its box until the next SetSize).
+func TestDualPaneHeightsMatchOnEntry(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i < 40; i++ {
+		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("f%02d.txt", i)), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Chdir(dir)
+	m := NewLazyS3Model()
+	m = pump(t, m, tea.WindowSizeMsg{Width: 101, Height: 31})
+	m = pump(t, m, keyPress('l'))
+	if !m.dualPane {
+		t.Fatal("'l' did not enter dual-pane mode")
+	}
+	left, right := m.remotePaneView(), m.localList.View()
+	if lh, rh := lipgloss.Height(left), lipgloss.Height(right); lh != rh {
+		t.Fatalf("pane heights differ right after entry: remote %d, local %d", lh, rh)
+	}
+	if lw, rw := lipgloss.Width(left), lipgloss.Width(right); lw+rw != 101 {
+		t.Fatalf("pane widths %d+%d do not sum to the terminal width 101", lw, rw)
+	}
+
+	// Exiting restores full-width single-pane sizing just as immediately.
+	m = pump(t, m, keyPress('l'))
+	if m.dualPane {
+		t.Fatal("'l' did not exit dual-pane mode")
+	}
+	if w := lipgloss.Width(m.remotePaneView()); w != 101 {
+		t.Fatalf("single-pane width = %d after exit, want 101", w)
+	}
+}
+
+// TestStatusUpdatePaneAndTransferCounts pins the status bar plumbing: the
+// pane indicator follows the dual-pane focus (empty single-pane), and the
+// transfer tallies refresh on TransferAddMsg/TransferDoneMsg without any
+// key press, so the bar's summary never goes stale.
+func TestStatusUpdatePaneAndTransferCounts(t *testing.T) {
+	m := NewLazyS3Model()
+	m = updateModel(t, m, tea.WindowSizeMsg{Width: 100, Height: 30})
+
+	m = updateModel(t, m, keyPress('l'))
+	if m.lastStatus.Pane != "local" {
+		t.Fatalf("pane = %q after entering dual mode, want local", m.lastStatus.Pane)
+	}
+	m = updateModel(t, m, tabPress())
+	if m.lastStatus.Pane != "remote" {
+		t.Fatalf("pane = %q after tab, want remote", m.lastStatus.Pane)
+	}
+	m = updateModel(t, m, keyPress('l'))
+	if m.lastStatus.Pane != "" {
+		t.Fatalf("pane = %q after exit, want empty", m.lastStatus.Pane)
+	}
+
+	m = updateModel(t, m, transferpanel.TransferAddMsg{Transfer: transferpanel.Transfer{
+		ID: "c1", Op: transferpanel.OpDownload, Status: transferpanel.StatusRunning,
+	}})
+	if m.lastStatus.TransfersRunning != 1 {
+		t.Fatalf("running = %d after add, want 1", m.lastStatus.TransfersRunning)
+	}
+	m = updateModel(t, m, transferpanel.TransferDoneMsg{ID: "c1", Op: transferpanel.OpDownload})
+	if m.lastStatus.TransfersRunning != 0 || m.lastStatus.TransfersDone != 1 {
+		t.Fatalf("running/done = %d/%d after done, want 0/1",
+			m.lastStatus.TransfersRunning, m.lastStatus.TransfersDone)
+	}
+	m = updateModel(t, m, transferpanel.TransferAddMsg{Transfer: transferpanel.Transfer{
+		ID: "c2", Op: transferpanel.OpUpload, Status: transferpanel.StatusRunning,
+	}})
+	m = updateModel(t, m, transferpanel.TransferDoneMsg{ID: "c2", Op: transferpanel.OpUpload, Err: context.Canceled})
+	if m.lastStatus.TransfersFailed != 1 {
+		t.Fatalf("failed = %d after cancel, want 1 (canceled counts as failed)", m.lastStatus.TransfersFailed)
+	}
+}
+
+// TestNarrowResizeAutoExitRefreshesStatusBar is the regression for the
+// stale pane chip: a resize below minDualPaneWidth auto-exits dual mode,
+// and the status bar must drop the pane indicator in the same pass — with
+// no key press or transfer event needed — while the "dual-pane closed"
+// info note stays readable (a resize is not navigation).
+func TestNarrowResizeAutoExitRefreshesStatusBar(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	m := NewLazyS3Model()
+	m = pump(t, m, tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = pump(t, m, keyPress('l'))
+	if !m.dualPane {
+		t.Fatal("'l' did not enter dual-pane mode")
+	}
+	if got := m.statusBar.Pane(); got != "local" {
+		t.Fatalf("pane chip = %q in dual mode, want local", got)
+	}
+
+	m = pump(t, m, tea.WindowSizeMsg{Width: 70, Height: 30})
+	if m.dualPane {
+		t.Fatal("narrow resize did not auto-exit dual mode")
+	}
+	if got := m.statusBar.Pane(); got != "" {
+		t.Fatalf("pane chip = %q after the narrow auto-exit, want empty", got)
+	}
+	if info := m.statusBar.Info(); !strings.Contains(info, "dual-pane closed") {
+		t.Fatalf("info = %q after the narrow auto-exit, want the dual-pane closed note", info)
+	}
+}
+
+// TestInfoNoteSurvivesTransferCompletion pins the ClearInfo plumbing end
+// to end: a note set while a transfer runs must still be readable after
+// the transfer turns terminal in the background (the tally-only status
+// update carries ClearInfo=false), while a navigation-ish change (tab
+// pane switch) still dismisses it.
+func TestInfoNoteSurvivesTransferCompletion(t *testing.T) {
+	m, _ := dualModel(t, "a.txt")
+	m = pump(t, m, transferpanel.TransferAddMsg{Transfer: transferpanel.Transfer{
+		ID: "c1", Op: transferpanel.OpDownload, Status: transferpanel.StatusRunning,
+	}})
+	m.statusBar.SetInfo("path copied: /tmp/x")
+	m = pump(t, m, transferpanel.TransferDoneMsg{ID: "c1", Op: transferpanel.OpDownload})
+	if got := m.statusBar.Info(); got != "path copied: /tmp/x" {
+		t.Fatalf("info = %q after a background transfer completed, want the note preserved", got)
+	}
+
+	m = pump(t, m, tabPress())
+	if got := m.statusBar.Info(); got != "" {
+		t.Fatalf("info = %q after a pane switch, want cleared", got)
 	}
 }
 

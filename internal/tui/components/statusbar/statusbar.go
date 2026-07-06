@@ -1,17 +1,24 @@
 // Package statusbar renders a single-line bar at the bottom of the lazys3
-// TUI that surfaces the current navigation context (profile, s3 URI,
-// selected count) and the most recent error.
+// TUI that surfaces the current context (profile, focused pane, selection
+// count, transfer tallies) and the most recent info note or error.
 //
 // The bar is driven by two messages delivered by the TUI's Update loop:
 //
-//   - types.StatusUpdateMsg — refreshes the profile/bucket/prefix and the
-//     selection count. The TUI emits this after dispatching to the active
-//     list so the bar always reflects the current state.
+//   - types.StatusUpdateMsg — refreshes the profile, the focused-pane
+//     indicator, the selection count and the transfer tallies. The TUI
+//     emits this after dispatching to the active list so the bar always
+//     reflects the current state.
 //   - types.ErrMsg — sets lastError so failures from file-op Cmds surface
 //     visibly. The error is dismissable (DismissError).
 //
-// The bar is rendered as one line when the terminal is wide enough, and
-// gracefully truncates the s3 URI when narrow. It is always visible.
+// Layout (one line, always):
+//
+//	[profile] [pane] [N selected] [▶R ✓D ✗F] [info] [error] … [? help]
+//
+// The pane indicator appears only in dual-pane mode, the selection count
+// only when >0, and the transfer summary only when any transfer rows
+// exist. The transient info and the error share the remaining middle
+// width (ansi-aware middle truncation); "? help" is right-aligned.
 package statusbar
 
 import (
@@ -20,6 +27,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/LinPr/lazys3/internal/tui/components/style"
 	"github.com/LinPr/lazys3/internal/tui/types"
@@ -27,15 +35,19 @@ import (
 
 // Model is the status bar state.
 type Model struct {
-	profile        string
-	bucket         string
-	prefix         string
-	selectedCount  int
-	lastError      string
-	info           string
-	width          int
-	height         int
-	dismissedError string // snapshot of the dismissed error so we don't reshow
+	profile          string
+	bucket           string
+	prefix           string
+	selectedCount    int
+	pane             string
+	transfersRunning int
+	transfersDone    int
+	transfersFailed  int
+	lastError        string
+	info             string
+	width            int
+	height           int
+	dismissedError   string // snapshot of the dismissed error so we don't reshow
 }
 
 // NewModel returns a fresh, empty status bar.
@@ -87,33 +99,28 @@ func (m *Model) SetInfo(msg string) { m.info = msg }
 // Info returns the current informational note.
 func (m Model) Info() string { return m.info }
 
-// SetProfile / SetBucket / SetPrefix / SetSelectedCount are imperative
-// setters used by the TUI to keep the bar in sync with the active state
-// without round-tripping through a message.
+// SetProfile / SetBucket / SetPrefix / SetSelectedCount / SetPane /
+// SetTransferCounts are imperative setters used by the TUI (and tests) to
+// keep the bar in sync without round-tripping through a message.
 func (m *Model) SetProfile(p string)    { m.profile = p }
 func (m *Model) SetBucket(b string)     { m.bucket = b }
 func (m *Model) SetPrefix(p string)     { m.prefix = p }
 func (m *Model) SetSelectedCount(n int) { m.selectedCount = n }
+func (m *Model) SetPane(p string)       { m.pane = p }
+func (m *Model) SetTransferCounts(running, done, failed int) {
+	m.transfersRunning = running
+	m.transfersDone = done
+	m.transfersFailed = failed
+}
 
-// Profile / Bucket / Prefix / SelectedCount / LastError are read accessors
-// used by the TUI and by tests.
+// Profile / Bucket / Prefix / SelectedCount / Pane / LastError are read
+// accessors used by the TUI and by tests.
 func (m Model) Profile() string    { return m.profile }
 func (m Model) Bucket() string     { return m.bucket }
 func (m Model) Prefix() string     { return m.prefix }
 func (m Model) SelectedCount() int { return m.selectedCount }
+func (m Model) Pane() string       { return m.pane }
 func (m Model) LastError() string  { return m.lastError }
-
-// S3URI returns the s3://bucket/prefix string the bar displays. When no
-// bucket is selected it returns "" so the bar can render a placeholder.
-func (m Model) S3URI() string {
-	if m.bucket == "" {
-		return ""
-	}
-	if m.prefix == "" {
-		return fmt.Sprintf("s3://%s", m.bucket)
-	}
-	return fmt.Sprintf("s3://%s/%s", m.bucket, m.prefix)
-}
 
 // Update handles types.StatusUpdateMsg and types.ErrMsg. All other
 // messages are ignored; the bar is passive.
@@ -124,20 +131,56 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.bucket = tmsg.Bucket
 		m.prefix = tmsg.Prefix
 		m.selectedCount = tmsg.SelectedCount
-		m.info = ""
+		m.pane = tmsg.Pane
+		m.transfersRunning = tmsg.TransfersRunning
+		m.transfersDone = tmsg.TransfersDone
+		m.transfersFailed = tmsg.TransfersFailed
+		// The info note is dismissed only on navigation-ish changes
+		// (ClearInfo); transfer-tally-only refreshes leave it readable.
+		if tmsg.ClearInfo {
+			m.info = ""
+		}
 	case types.ErrMsg:
 		m.SetError(tmsg.Err.Error())
 	}
 	return m, nil
 }
 
-// View renders the bar as a single styled line. The layout is:
+// transferSummary renders the "▶R ✓D ✗F" tallies (running incl. queued /
+// done / failed incl. canceled), zero segments omitted. ASCII fallbacks
+// (">R okD xF") are used when nerd_font is off. Empty when no transfer
+// rows exist at all.
+func (m Model) transferSummary() string {
+	if m.transfersRunning+m.transfersDone+m.transfersFailed == 0 {
+		return ""
+	}
+	run, ok, fail := "▶", "✓", "✗"
+	if !style.NerdFontEnabled() {
+		run, ok, fail = ">", "ok", "x"
+	}
+	runStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#3b82f6"))
+	okStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#22c55e"))
+	failStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#ef4444"))
+	var parts []string
+	if m.transfersRunning > 0 {
+		parts = append(parts, runStyle.Render(fmt.Sprintf("%s%d", run, m.transfersRunning)))
+	}
+	if m.transfersDone > 0 {
+		parts = append(parts, okStyle.Render(fmt.Sprintf("%s%d", ok, m.transfersDone)))
+	}
+	if m.transfersFailed > 0 {
+		parts = append(parts, failStyle.Render(fmt.Sprintf("%s%d", fail, m.transfersFailed)))
+	}
+	return strings.Join(parts, " ")
+}
+
+// View renders the bar as a single styled line:
 //
-//	[profile]  s3://bucket/prefix   [N selected]   [info]   [last error]
+//	[profile] [pane] [N selected] [transfer summary] [info] [error] … [? help]
 //
-// When width is tight the s3 URI is truncated from the middle; the error
-// is dropped before the URI is dropped. The bar always occupies exactly
-// one terminal line.
+// The info/error middle section is ansi-truncated (from the middle) to
+// whatever width the fixed segments leave over; "? help" is right-aligned.
+// The bar always occupies exactly one terminal line.
 func (m Model) View() string {
 	if m.width <= 0 {
 		return ""
@@ -146,69 +189,62 @@ func (m Model) View() string {
 	// The profile chip and the error chip pick up theme overrides via the
 	// shared style vars (title_fg/title_bg, status_error_fg).
 	profileStyle := style.TitleStyle
-	pathStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#dddddd"))
+	paneStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#a78bfa"))
 	selStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#3b82f6"))
 	infoStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#22c55e"))
+	helpStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#777777"))
 	errStyle := style.StatusErrorStyle
 
-	profileBlock := profileStyle.Render(profileLabel(m.profile))
-	uri := m.S3URI()
-	if uri == "" {
-		uri = "—"
+	const sep = "  "
+	segs := []string{profileStyle.Render(profileLabel(m.profile))}
+	if m.pane != "" {
+		segs = append(segs, paneStyle.Render(m.pane))
 	}
-
-	selBlock := ""
 	if m.selectedCount > 0 {
-		selBlock = selStyle.Render(fmt.Sprintf("%d selected", m.selectedCount))
+		segs = append(segs, selStyle.Render(fmt.Sprintf("%d selected", m.selectedCount)))
 	}
-	infoBlock := ""
-	if m.info != "" {
-		infoBlock = infoStyle.Render(truncateMiddle(m.info, 60))
+	if ts := m.transferSummary(); ts != "" {
+		segs = append(segs, ts)
 	}
-	errBlock := ""
-	if m.lastError != "" {
-		errBlock = errStyle.Render("err: " + truncateMiddle(m.lastError, 30))
+	left := strings.Join(segs, sep)
+	helpBlock := helpStyle.Render("? help")
+
+	// The middle (info + error) gets whatever the fixed segments leave
+	// over. The error is budgeted first so it is never squeezed out by a
+	// long info note; both are middle-truncated (CJK-safe).
+	avail := m.width - lipgloss.Width(left) - lipgloss.Width(helpBlock) - 2*len(sep)
+	var middle []string
+	errW := 0
+	if m.lastError != "" && avail > 0 {
+		errText := truncateMiddle("err: "+m.lastError, avail)
+		errW = lipgloss.Width(errText) + len(sep)
+		middle = append(middle, errStyle.Render(errText))
+	}
+	if m.info != "" && avail-errW > 0 {
+		infoBlock := infoStyle.Render(truncateMiddle(m.info, avail-errW))
+		middle = append([]string{infoBlock}, middle...)
 	}
 
-	sep := "  "
-	used := lipgloss.Width(profileBlock) + lipgloss.Width(sep)
-	used += lipgloss.Width(selBlock)
-	if selBlock != "" {
-		used += lipgloss.Width(sep)
+	line := left
+	if len(middle) > 0 {
+		line += sep + strings.Join(middle, sep)
 	}
-	used += lipgloss.Width(infoBlock)
-	if infoBlock != "" {
-		used += lipgloss.Width(sep)
+	if pad := m.width - lipgloss.Width(line) - lipgloss.Width(helpBlock); pad > 0 {
+		line += strings.Repeat(" ", pad) + helpBlock
 	}
-	used += lipgloss.Width(errBlock)
-	if errBlock != "" {
-		used += lipgloss.Width(sep)
-	}
-	uriW := m.width - used
-	if uriW < 8 {
-		uriW = 8
-	}
-	uriBlock := pathStyle.Render(truncateMiddle(uri, uriW))
-
-	parts := []string{profileBlock, uriBlock}
-	if selBlock != "" {
-		parts = append(parts, selBlock)
-	}
-	if infoBlock != "" {
-		parts = append(parts, infoBlock)
-	}
-	if errBlock != "" {
-		parts = append(parts, errBlock)
-	}
+	// Hard-clip as a last resort so a too-narrow bar truncates instead of
+	// wrapping (MaxHeight would otherwise clip the wrapped tail invisibly).
+	line = ansi.Truncate(line, m.width, "")
 
 	bar := lipgloss.NewStyle().
 		Background(lipgloss.Color("#222222")).
 		Width(m.width).
 		MaxHeight(1)
-	return bar.Render(strings.Join(parts, sep))
+	return bar.Render(line)
 }
 
 // profileLabel returns the profile name or a placeholder when none is set.

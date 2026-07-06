@@ -68,26 +68,32 @@ func (m *Model) handleDualPaneToggle() tea.Cmd {
 	return m.enterDualPane()
 }
 
-// enterDualPane switches to the dual layout, starting on the remote pane.
-// The preview is closed (matching exit/switch) so 'l' visibly swaps the
-// preview for the local pane rather than rendering an identical layout.
-// The local pane's first directory fetch is lazy (EnsureLoaded), so its
-// last visited directory persists across toggles.
+// enterDualPane switches to the dual layout, focusing the local pane and
+// loading the start directory fresh (ResetToStartDir) — 'l' always opens
+// the same view, no matter where a previous dual session navigated to.
+// Navigation within one open session persists as usual; only close→reopen
+// resets. The preview is closed (matching exit/switch) so 'l' visibly
+// swaps the preview for the local pane rather than rendering an identical
+// layout. resizeLists applies the dual layout for the current terminal
+// size immediately, so both panes render at matching sizes without
+// waiting for the next WindowSizeMsg or tab.
 func (m *Model) enterDualPane() tea.Cmd {
 	if m.width < minDualPaneWidth {
 		m.statusBar.SetInfo(fmt.Sprintf("terminal too narrow for dual-pane (needs ≥%d cols)", minDualPaneWidth))
 		return nil
 	}
 	m.dualPane = true
-	m.paneFocus = focusRemote
+	m.paneFocus = focusLocal
 	m.applyPaneFocus()
 	m.closePreview()
 	m.resizeLists()
-	return m.localList.EnsureLoaded()
+	return m.localList.ResetToStartDir()
 }
 
-// exitDualPane restores the single-pane layout. The preview is closed so
-// single-pane never renders with a stale dual-sized preview.
+// exitDualPane restores the single-pane layout (resizeLists puts the
+// remote lists back at full width for the current terminal size). The
+// preview is closed so single-pane never renders with a stale dual-sized
+// preview.
 func (m *Model) exitDualPane() {
 	m.dualPane = false
 	m.paneFocus = focusRemote
@@ -105,12 +111,12 @@ func (m *Model) handlePaneSwitch() {
 		return
 	}
 	m.closePreview()
+	// The status bar's persistent pane indicator reflects the new focus;
+	// no transient info note needed.
 	if m.paneFocus == focusRemote {
 		m.paneFocus = focusLocal
-		m.statusBar.SetInfo("pane: local")
 	} else {
 		m.paneFocus = focusRemote
-		m.statusBar.SetInfo("pane: remote")
 	}
 	m.applyPaneFocus()
 	m.resizeLists()

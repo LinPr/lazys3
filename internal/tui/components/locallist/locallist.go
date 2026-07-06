@@ -37,7 +37,7 @@ type Model struct {
 	entries []Entry
 	dir     string
 
-	// startDir is the directory the first EnsureLoaded fetch targets
+	// startDir is the directory every ResetToStartDir fetch targets
 	// (falling back to $HOME then "/" when unset).
 	startDir string
 
@@ -58,6 +58,13 @@ type Model struct {
 	// that Name() after the next successful load (overriding the index
 	// restore). Used to keep the cursor on a just-renamed/created entry.
 	pendingSelect string
+
+	// fetchGen guards against stale in-flight loads: every navigation
+	// fetch bumps it and stamps the value onto its LoadedMsg (see fetch),
+	// and Update drops messages whose generation was superseded. Without
+	// it a slow Enter fetch finishing after ResetToStartDir would silently
+	// reopen the pane at the previous directory.
+	fetchGen int
 }
 
 // NewModel constructs an empty local list with the custom select-aware
@@ -95,6 +102,11 @@ func (m Model) Init() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case LoadedMsg:
+		if msg.Gen != 0 && msg.Gen != m.fetchGen {
+			// A later navigation superseded this fetch; drop the result
+			// (the current-generation fetch owns the loading state).
+			return m, nil
+		}
 		m.SetLoading(false)
 		if msg.Err != nil {
 			// Keep the previous directory and listing; surface the failure
@@ -173,18 +185,18 @@ func (m Model) Focused() bool { return m.focused }
 // successful load).
 func (m Model) Dir() string { return m.dir }
 
-// SetStartDir sets the directory the first EnsureLoaded fetch targets
-// (the lazys3 process's working directory, captured by NewLazyS3Model).
+// SetStartDir sets the directory every ResetToStartDir fetch targets
+// (config [local] start_dir, else the lazys3 process's working directory,
+// captured by NewLazyS3Model).
 func (m *Model) SetStartDir(dir string) { m.startDir = dir }
 
-// EnsureLoaded returns the first-ever directory fetch (the start dir from
-// SetStartDir, falling back to the user's home then "/"), or nil once a
-// directory has been loaded. Dir() persists across dual-pane toggles, so
-// re-entering dual mode keeps the last visited directory.
-func (m *Model) EnsureLoaded() tea.Cmd {
-	if m.dir != "" {
-		return nil
-	}
+// ResetToStartDir arms a fresh fetch of the start directory (from
+// SetStartDir, falling back to the user's home then "/"). Entering
+// dual-pane mode always opens the local pane there: the selection, any
+// applied filter and both pending cursor placements are cleared up front
+// so nothing from a previous visit leaks into the fresh listing
+// (setEntries clears them again when the LoadedMsg commits).
+func (m *Model) ResetToStartDir() tea.Cmd {
 	dir := m.startDir
 	if dir == "" {
 		home, err := os.UserHomeDir()
@@ -193,8 +205,27 @@ func (m *Model) EnsureLoaded() tea.Cmd {
 		}
 		dir = home
 	}
+	m.ClearSelection()
+	m.list.ResetFilter()
+	m.pendingRestore = ""
+	m.pendingSelect = ""
+	return m.fetch(dir)
+}
+
+// fetch arms a generation-guarded directory fetch: the counter is bumped
+// and stamped onto the resulting LoadedMsg so Update can drop results
+// from fetches that a later navigation superseded (bubbletea runs cmds
+// concurrently, so a slow read can land after a newer one).
+func (m *Model) fetch(dir string) tea.Cmd {
+	m.fetchGen++
+	gen := m.fetchGen
 	m.SetLoading(true)
-	return FetchDirCmd(dir)
+	inner := FetchDirCmd(dir)
+	return func() tea.Msg {
+		msg := inner().(LoadedMsg)
+		msg.Gen = gen
+		return msg
+	}
 }
 
 // Enter navigates into the highlighted directory: the current cursor is
@@ -208,8 +239,7 @@ func (m *Model) Enter() tea.Cmd {
 	}
 	m.rememberPosition(m.dir)
 	m.pendingRestore = e.path
-	m.SetLoading(true)
-	return FetchDirCmd(e.path)
+	return m.fetch(e.path)
 }
 
 // Up navigates to the parent directory, memoising like Enter. No-op at
@@ -224,8 +254,7 @@ func (m *Model) Up() tea.Cmd {
 	}
 	m.rememberPosition(m.dir)
 	m.pendingRestore = parent
-	m.SetLoading(true)
-	return FetchDirCmd(parent)
+	return m.fetch(parent)
 }
 
 // Refresh re-fetches the current directory, keeping the cursor position
@@ -236,8 +265,7 @@ func (m *Model) Refresh() tea.Cmd {
 	}
 	m.rememberPosition(m.dir)
 	m.pendingRestore = m.dir
-	m.SetLoading(true)
-	return FetchDirCmd(m.dir)
+	return m.fetch(m.dir)
 }
 
 // GetSelectedEntry returns the currently highlighted entry, or nil.
@@ -296,6 +324,13 @@ func (m *Model) setEntries(items []Entry) {
 	m.list.ResetFilter()
 	sortEntries(m.entries, m.sortBy, m.sortDesc)
 	m.list.SetItems(m.listItems())
+	// bubbles' SetItems recomputes the page size against the pagination
+	// line's PREVIOUS height (updatePagination subtracts it before
+	// SetTotalPages runs), so a listing that crosses the one-page boundary
+	// renders one row too many — the pane draws a line taller than its box
+	// until the next SetSize. Re-apply the size to converge (through the
+	// component SetSize, which also restores the narrowed help budget).
+	m.SetSize(m.width, m.height)
 	m.list.ResetSelected()
 	if m.pendingRestore != "" && len(m.entries) > 0 {
 		if idx, ok := m.posMemo[m.pendingRestore]; ok {

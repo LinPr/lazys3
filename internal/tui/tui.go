@@ -57,9 +57,9 @@ type Model struct {
 	selectedBucket  string
 	selectedObject  string
 	// Dual-pane (local ⇄ remote) mode; see dualpane.go. paneFocus is
-	// meaningful only while dualPane and resets to focusRemote on every
-	// toggle. Focus and state are orthogonal: m.state keeps meaning
-	// "which remote list is active".
+	// meaningful only while dualPane: entering focuses the local pane,
+	// exiting resets to focusRemote. Focus and state are orthogonal:
+	// m.state keeps meaning "which remote list is active".
 	localList locallist.Model
 	dualPane  bool
 	paneFocus paneFocus
@@ -86,10 +86,10 @@ func NewLazyS3ModelWithConfig(cfg config.Config) Model {
 	// Work around a bubbletea-beta1 renderer bug under GNU screen / the
 	// Linux console before tea.Program picks its renderer (see renderer.go).
 	ensureCompatRenderer()
-	// The local pane's first load is [local] start_dir when configured
+	// The local pane always opens at [local] start_dir when configured
 	// (config.Load only keeps it when the directory exists), otherwise the
-	// lazys3 process's working directory, captured once here (EnsureLoaded
-	// falls back to $HOME then "/" when Getwd fails).
+	// lazys3 process's working directory, captured once here
+	// (ResetToStartDir falls back to $HOME then "/" when Getwd fails).
 	localList := locallist.NewModel()
 	startDir := cfg.Local.StartDir
 	if startDir == "" {
@@ -151,7 +151,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		// initComponentsSize may auto-exit dual mode on a narrow resize;
+		// publish the pane/selection change synchronously so the bar never
+		// keeps a stale dual-pane chip. A resize is not navigation, so the
+		// info note (including the "dual-pane closed" one the auto-exit
+		// just set) is restored over the update's ClearInfo.
 		m.initComponentsSize(msg)
+		if cmd := m.emitStatusUpdate(); cmd != nil {
+			note := m.statusBar.Info()
+			newBar, _ := m.statusBar.Update(cmd())
+			m.statusBar = newBar
+			m.statusBar.SetInfo(note)
+		}
 		return m, nil
 	case tea.KeyMsg:
 		// ctrl+c is the global emergency exit. Handled before the modal
@@ -731,16 +742,40 @@ func (m *Model) emitStatusUpdate() tea.Cmd {
 	if m.localFocused() {
 		selected = m.localList.SelectedCount()
 	}
+	// The pane indicator names the focused pane while dual mode is active.
+	pane := ""
+	if m.dualPane {
+		pane = "remote"
+		if m.paneFocus == focusLocal {
+			pane = "local"
+		}
+	}
+	// The transfer tallies participate in the dedup below, so a
+	// TransferAddMsg/TransferDoneMsg pass (which falls through to the
+	// final emitStatusUpdate) always refreshes the bar's summary.
+	running, done, failed := m.transferPanel.Counts()
 	upd := types.StatusUpdateMsg{
-		Profile:       m.selectedProfile,
-		Bucket:        m.selectedBucket,
-		Prefix:        prefix,
-		SelectedCount: selected,
+		Profile:          m.selectedProfile,
+		Bucket:           m.selectedBucket,
+		Prefix:           prefix,
+		SelectedCount:    selected,
+		Pane:             pane,
+		TransfersRunning: running,
+		TransfersDone:    done,
+		TransfersFailed:  failed,
 	}
 	if upd == m.lastStatus {
 		return nil
 	}
+	prev := m.lastStatus
 	m.lastStatus = upd
+	// Only a navigation-ish change dismisses the transient info note; a
+	// transfer tally moving in the background must not wipe a note the
+	// user is still reading. ClearInfo is set after the lastStatus
+	// snapshot so it never participates in the dedup above.
+	upd.ClearInfo = upd.Profile != prev.Profile || upd.Bucket != prev.Bucket ||
+		upd.Prefix != prev.Prefix || upd.SelectedCount != prev.SelectedCount ||
+		upd.Pane != prev.Pane
 	return func() tea.Msg {
 		return upd
 	}

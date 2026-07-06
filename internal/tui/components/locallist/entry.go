@@ -91,11 +91,15 @@ func (e Entry) GetPreviewContent() string {
 func (e Entry) GetPreviewRequest() *preview.PreviewRequest { return nil }
 
 // LoadedMsg is the result of FetchDirCmd. Dir echoes the directory that
-// was read so the Model only commits a navigation on success.
+// was read so the Model only commits a navigation on success. Gen carries
+// the fetch generation stamped by Model.fetch; the Model's Update drops
+// messages from superseded fetches. Gen 0 (a bare FetchDirCmd) is always
+// accepted.
 type LoadedMsg struct {
 	Dir     string
 	Entries []Entry
 	Err     error
+	Gen     int
 }
 
 // FetchDirCmd reads dir with os.ReadDir off the Update goroutine.

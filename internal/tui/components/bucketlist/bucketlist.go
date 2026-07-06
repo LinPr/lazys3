@@ -140,6 +140,11 @@ func (m *Model) SetBuckets(items []Bucket) {
 		listItems = append(listItems, b)
 	}
 	m.bucketlist.SetItems(listItems)
+	// bubbles' SetItems recomputes the page size against the pagination
+	// line's PREVIOUS height, so a listing that crosses the one-page
+	// boundary renders one row too many until the next SetSize. Re-apply
+	// the size to converge (see locallist.setEntries).
+	m.SetSize(m.width, m.height)
 }
 
 // Filtering reports whether the list's filter input is focused. The parent

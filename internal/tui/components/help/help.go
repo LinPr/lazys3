@@ -136,6 +136,7 @@ func DefaultBindings() []Group {
 			Name: "Panels & Transfers",
 			Bindings: []Binding{
 				{Key: "t", Desc: "toggle transfer panel visibility"},
+				{Key: "T", Desc: "transfer history (persistent, across sessions)"},
 				{Key: "x", Desc: "cancel the most recent running transfer"},
 				{Key: "?", Desc: "toggle this help overlay"},
 			},

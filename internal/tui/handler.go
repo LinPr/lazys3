@@ -701,9 +701,10 @@ func (m *Model) initComponentsSize(msg tea.WindowSizeMsg) {
 	m.transferPanel.SetSize(m.width, transferPanelHeight)
 	m.statusBar.SetSize(m.width, statusBarHeight)
 	m.modal.SetSize(m.width, m.height)
-	// Help overlay uses the full canvas so it can center itself over
-	// the whole screen.
+	// Help and history overlays use the full canvas so they can lay
+	// themselves out over the whole screen.
 	m.help.SetSize(m.width, m.height)
+	m.historyView.SetSize(m.width, m.height)
 }
 
 func (m *Model) handleProfileSelect() tea.Cmd {

@@ -1,7 +1,8 @@
 // Package keybinding holds global key bindings for the TUI.
 //
 // Keys already claimed by the global dispatcher (tui.go): q, ctrl+c,
-// enter, right, backspace, left, p, t, ?, space, a, d, u, D, r, c, B, s, y.
+// enter, right, backspace, left, p, t, T, ?, space, a, d, u, D, r, c, B,
+// s, y.
 // The object-list component additionally claims the keys below; they are
 // exported so the help overlay and the component reference one source of
 // truth.
@@ -41,4 +42,8 @@ const (
 	// PresignYank ("yank link") generates a presigned share URL for the
 	// highlighted object (files only).
 	PresignYank = "y"
+
+	// HistoryToggle (shift+t) opens/closes the persistent transfer-history
+	// overlay (global, handled in tui.go).
+	HistoryToggle = "T"
 )

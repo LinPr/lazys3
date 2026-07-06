@@ -379,6 +379,18 @@ func (m *Model) SetNote(id, note string) {
 	}
 }
 
+// Transfer returns a copy of the named transfer's row. Used by the TUI to
+// snapshot the final row state (bytes, StartedAt/FinishedAt, note) when a
+// transfer turns terminal, e.g. for the persistent history file.
+func (m Model) Transfer(id string) (Transfer, bool) {
+	for i := range m.transfers {
+		if m.transfers[i].ID == id {
+			return m.transfers[i], true
+		}
+	}
+	return Transfer{}, false
+}
+
 // Status returns the named transfer's status.
 func (m Model) Status(id string) (Status, bool) {
 	for i := range m.transfers {
@@ -404,6 +416,18 @@ func (m *Model) CancelLatest() (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// Active returns copies of the queued/running rows. Used by the quit path
+// to snapshot in-flight transfers before CancelAll marks them canceled.
+func (m Model) Active() []Transfer {
+	var active []Transfer
+	for _, t := range m.transfers {
+		if t.Status == StatusRunning || t.Status == StatusQueued {
+			active = append(active, t)
+		}
+	}
+	return active
 }
 
 // CancelAll cancels every outstanding transfer context. Called on quit so

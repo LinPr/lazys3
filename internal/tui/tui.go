@@ -13,8 +13,10 @@ import (
 	tea "github.com/charmbracelet/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss/v2"
 
+	"github.com/LinPr/lazys3/internal/history"
 	"github.com/LinPr/lazys3/internal/tui/components/bucketlist"
 	"github.com/LinPr/lazys3/internal/tui/components/help"
+	"github.com/LinPr/lazys3/internal/tui/components/historyview"
 	"github.com/LinPr/lazys3/internal/tui/components/modal"
 	"github.com/LinPr/lazys3/internal/tui/components/objectlist"
 	"github.com/LinPr/lazys3/internal/tui/components/preview"
@@ -43,6 +45,8 @@ type Model struct {
 	modal           modal.Model
 	statusBar       statusbar.Model
 	help            help.Model
+	historyView     historyview.Model
+	historyStore    *history.Store
 	selectedProfile string
 	selectedBucket  string
 	selectedObject  string
@@ -68,6 +72,8 @@ func NewLazyS3Model() Model {
 		modal:         modal.NewModel(),
 		statusBar:     statusbar.NewModel(),
 		help:          help.NewModel(),
+		historyView:   historyview.NewModel(),
+		historyStore:  history.NewStore(history.DefaultPath()),
 	}
 }
 
@@ -81,6 +87,7 @@ func (m Model) Init() tea.Cmd {
 		m.modal.Init(),
 		m.statusBar.Init(),
 		m.help.Init(),
+		m.historyView.Init(),
 	)
 }
 
@@ -96,7 +103,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// and help branches so the user can always force-quit, even while
 		// an overlay is swallowing every other key.
 		if msg.String() == "ctrl+c" {
-			m.transferPanel.CancelAll()
+			m.cancelAllOnQuit()
 			return m, tea.Quit
 		}
 		// Modal takes over key dispatch when visible: forward to the
@@ -119,6 +126,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.emitStatusUpdate())
 			return m, tea.Batch(cmds...)
 		}
+		// History overlay mirrors the help overlay: 'T'/esc closes it,
+		// j/k/pgup/pgdown scroll, everything else is swallowed so reading
+		// the history can't trigger a file op.
+		if m.historyView.IsVisible() {
+			if keybinding.KeyString(msg.String()) == keybinding.HistoryToggle || msg.String() == "esc" {
+				m.historyView.Hide()
+			} else {
+				m.historyView.HandleKey(msg.String())
+			}
+			cmds = append(cmds, m.emitStatusUpdate())
+			return m, tea.Batch(cmds...)
+		}
 		// While a list's filter input is focused, every key belongs to
 		// the list (the user is typing a pattern): skip the global hotkey
 		// switch and let the state dispatch below forward the key to the
@@ -136,7 +155,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "q":
 				// Cancel every outstanding transfer context so no op
 				// goroutine outlives the TUI.
-				m.transferPanel.CancelAll()
+				m.cancelAllOnQuit()
 				return m, tea.Quit
 
 			case "enter", "right":
@@ -173,6 +192,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "?":
 				m.help.Toggle()
 				return m, m.emitStatusUpdate()
+
+			// T opens the persistent transfer-history overlay. The records
+			// are re-read from the state file on every open (via a tea.Cmd,
+			// so the read never blocks Update); closing is handled in the
+			// historyView.IsVisible branch above.
+			case keybinding.HistoryToggle:
+				m.historyView.Show()
+				return m, tea.Batch(historyview.LoadCmd(m.historyStore), m.emitStatusUpdate())
 
 			// Multi-select: space toggles the current object's selection.
 			// We handle this here (before forwarding to the list) because
@@ -253,6 +280,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		newTP, cmd := m.transferPanel.Update(tmsg)
 		m.transferPanel = newTP
 		cmds = append(cmds, cmd)
+		// The row just turned terminal: snapshot it (final status, bytes,
+		// FinishedAt, note) and append it to the persistent history file.
+		// The record is built here on the Update goroutine (cheap) but the
+		// file IO runs inside the returned tea.Cmd.
+		if hcmd := m.appendHistoryCmd(tmsg); hcmd != nil {
+			cmds = append(cmds, hcmd)
+		}
 		switch {
 		case errors.Is(tmsg.Err, context.Canceled):
 			// User-cancelled: the row already renders "canceled"; no
@@ -273,6 +307,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, cmd)
 			}
 		}
+	case historyview.LoadedMsg:
+		newHV, cmd := m.historyView.Update(tmsg)
+		m.historyView = newHV
+		cmds = append(cmds, cmd)
 	case types.SyncPollMsg:
 		// syncmodal.PollCmd snapshots the sync's shared progress state
 		// into the message. Forward it to the panel and re-arm the
@@ -310,12 +348,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, tea.SetClipboard(tmsg.URL))
 		insecure := strings.HasPrefix(tmsg.URL, "http://")
 		// PresignCmd is async (credential resolution can take seconds), so
-		// the result can land while another modal or the help overlay is
-		// open. Never clobber those (a pending confirm or half-typed input
-		// would be silently discarded, and a modal opened behind the help
-		// overlay would swallow keys invisibly): fall back to a status-bar
-		// note — the URL is on the clipboard either way.
-		if m.modal.IsVisible() || m.help.IsVisible() {
+		// the result can land while another modal, the help overlay, or the
+		// history overlay is open. Never clobber those (a pending confirm or
+		// half-typed input would be silently discarded, and a modal opened
+		// behind a full-screen overlay would swallow keys invisibly): fall
+		// back to a status-bar note — the URL is on the clipboard either way.
+		if m.modal.IsVisible() || m.help.IsVisible() || m.historyView.IsVisible() {
 			note := fmt.Sprintf("presigned URL for %s copied to clipboard (valid %s)", path.Base(tmsg.Key), tmsg.Expiry)
 			if insecure {
 				note += " — plain HTTP"
@@ -424,6 +462,95 @@ func (m *Model) emitStatusUpdate() tea.Cmd {
 	}
 }
 
+// appendHistoryCmd builds a history.Record for the transfer that tmsg just
+// turned terminal and returns a tea.Cmd that appends it to the persistent
+// history file. The record is snapshotted from the panel row (which
+// already carries the final status, byte counts, note and FinishedAt); a
+// row that was pruned before the message arrived falls back to the fields
+// echoed on the message itself. The file IO happens inside the Cmd so
+// Update never blocks on it.
+func (m *Model) appendHistoryCmd(tmsg transferpanel.TransferDoneMsg) tea.Cmd {
+	if m.historyStore == nil {
+		return nil
+	}
+	rec := history.Record{
+		Time:  time.Now().Format(time.RFC3339),
+		Op:    string(tmsg.Op),
+		Label: tmsg.Label,
+		Bytes: -1,
+		Note:  tmsg.Note,
+	}
+	switch {
+	case errors.Is(tmsg.Err, context.Canceled):
+		rec.Status = string(transferpanel.StatusCanceled)
+	case tmsg.Err != nil:
+		rec.Status = string(transferpanel.StatusFailed)
+		rec.Error = tmsg.Err.Error()
+	default:
+		rec.Status = string(transferpanel.StatusDone)
+	}
+	if t, ok := m.transferPanel.Transfer(tmsg.ID); ok {
+		rec.Status = string(t.Status)
+		rec.Note = t.Note
+		if t.Err != nil && t.Status == transferpanel.StatusFailed {
+			rec.Error = t.Err.Error()
+		}
+		if t.Done > 0 {
+			rec.Bytes = t.Done
+		}
+		if !t.FinishedAt.IsZero() {
+			rec.Time = t.FinishedAt.Format(time.RFC3339)
+			if !t.StartedAt.IsZero() {
+				rec.DurationMs = t.FinishedAt.Sub(t.StartedAt).Milliseconds()
+			}
+		}
+	}
+	store := m.historyStore
+	return func() tea.Msg {
+		if err := store.Append(rec); err != nil {
+			log.Println("history append:", err)
+		}
+		return nil
+	}
+}
+
+// cancelAllOnQuit cancels every outstanding transfer and synchronously
+// appends a canceled record for each row that was still queued/running.
+// Quit returns tea.Quit right after this, so the op goroutines'
+// TransferDoneMsg (and its append Cmd) never runs — without this, a
+// transfer interrupted by quitting would leave no trace in the history
+// even though the same cancellation via 'x' would.
+func (m *Model) cancelAllOnQuit() {
+	active := m.transferPanel.Active()
+	m.transferPanel.CancelAll()
+	if m.historyStore == nil {
+		return
+	}
+	now := time.Now()
+	for _, t := range active {
+		if t.Progress != nil {
+			t.Done, _ = t.Progress.Load()
+		}
+		rec := history.Record{
+			Time:   now.Format(time.RFC3339),
+			Op:     string(t.Op),
+			Label:  t.Label,
+			Status: string(transferpanel.StatusCanceled),
+			Bytes:  -1,
+			Note:   t.Note,
+		}
+		if t.Done > 0 {
+			rec.Bytes = t.Done
+		}
+		if !t.StartedAt.IsZero() {
+			rec.DurationMs = now.Sub(t.StartedAt).Milliseconds()
+		}
+		if err := m.historyStore.Append(rec); err != nil {
+			log.Println("history append:", err)
+		}
+	}
+}
+
 // filtering reports whether the active list's filter input is focused (the
 // user is typing a filter pattern), in which case global hotkeys must not
 // fire.
@@ -512,6 +639,9 @@ func (m Model) View() string {
 	// user can always summon the cheat sheet, even with a modal open.
 	if m.help.IsVisible() {
 		return m.help.View()
+	}
+	if m.historyView.IsVisible() {
+		return m.historyView.View()
 	}
 	if m.modal.IsVisible() {
 		return m.modal.View()

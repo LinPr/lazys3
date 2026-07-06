@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"path"
 	"path/filepath"
 	"time"
 
@@ -170,6 +171,13 @@ func (s *Storage) DownloadFileWithProgress(ctx context.Context, bucketName strin
 		}
 		tracker.finish()
 		return nil
+	}
+
+	// A directory as the destination means "download into it": append the
+	// object's base name, matching cp/aws-cli semantics. Without this the
+	// temp-file rename below would fail against the existing directory.
+	if fi, statErr := os.Stat(localFile); statErr == nil && fi.IsDir() {
+		localFile = filepath.Join(localFile, path.Base(objectKey))
 	}
 
 	// Stream into a temp file next to localFile and rename on success, so

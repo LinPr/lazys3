@@ -32,10 +32,9 @@ const (
 	// URI). Enter submits; Esc cancels.
 	ModeInput Mode = iota
 	// ModeConfirm renders a body and asks yes/no via two footer buttons.
-	// tab / left / right move the highlight (No is highlighted on open, so
-	// a reflexive enter never runs a destructive op), enter executes the
-	// highlighted button, 'y' always confirms, 'n'/'N' and Esc always
-	// cancel.
+	// tab / left / right move the highlight (Yes is highlighted on open —
+	// enter is the fast-path confirm), enter executes the highlighted
+	// button, 'y' always confirms, 'n'/'N' and Esc always cancel.
 	ModeConfirm
 )
 

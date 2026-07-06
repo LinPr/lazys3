@@ -37,6 +37,10 @@ type Model struct {
 	entries []Entry
 	dir     string
 
+	// startDir is the directory the first EnsureLoaded fetch targets
+	// (falling back to $HOME then "/" when unset).
+	startDir string
+
 	sortBy   sortField
 	sortDesc bool
 
@@ -50,6 +54,10 @@ type Model struct {
 	posMemo        map[string]int
 	memoKeys       []string
 	pendingRestore string
+	// pendingSelect, when non-empty, moves the cursor onto the entry with
+	// that Name() after the next successful load (overriding the index
+	// restore). Used to keep the cursor on a just-renamed/created entry.
+	pendingSelect string
 }
 
 // NewModel constructs an empty local list with the custom select-aware
@@ -91,8 +99,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		if msg.Err != nil {
 			// Keep the previous directory and listing; surface the failure
 			// on the status bar so the pane never gets stuck in an
-			// unreadable directory.
+			// unreadable directory. Drop both pending cursor placements or
+			// they would fire on the next unrelated load.
 			m.pendingRestore = ""
+			m.pendingSelect = ""
 			return m, func() tea.Msg {
 				return types.ErrMsg{Err: fmt.Errorf("read dir %s: %w", msg.Dir, msg.Err)}
 			}
@@ -163,20 +173,28 @@ func (m Model) Focused() bool { return m.focused }
 // successful load).
 func (m Model) Dir() string { return m.dir }
 
-// EnsureLoaded returns the first-ever directory fetch (the user's home,
-// falling back to "/"), or nil once a directory has been loaded. Dir()
-// persists across dual-pane toggles, so re-entering dual mode keeps the
-// last visited directory.
+// SetStartDir sets the directory the first EnsureLoaded fetch targets
+// (the lazys3 process's working directory, captured by NewLazyS3Model).
+func (m *Model) SetStartDir(dir string) { m.startDir = dir }
+
+// EnsureLoaded returns the first-ever directory fetch (the start dir from
+// SetStartDir, falling back to the user's home then "/"), or nil once a
+// directory has been loaded. Dir() persists across dual-pane toggles, so
+// re-entering dual mode keeps the last visited directory.
 func (m *Model) EnsureLoaded() tea.Cmd {
 	if m.dir != "" {
 		return nil
 	}
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		home = "/"
+	dir := m.startDir
+	if dir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil || home == "" {
+			home = "/"
+		}
+		dir = home
 	}
 	m.SetLoading(true)
-	return FetchDirCmd(home)
+	return FetchDirCmd(dir)
 }
 
 // Enter navigates into the highlighted directory: the current cursor is
@@ -290,8 +308,23 @@ func (m *Model) setEntries(items []Entry) {
 		}
 	}
 	m.pendingRestore = ""
+	if m.pendingSelect != "" {
+		for i, e := range m.entries {
+			if e.Name() == m.pendingSelect {
+				m.list.Select(i)
+				break
+			}
+		}
+		m.pendingSelect = ""
+	}
 	m.refreshTitle()
 }
+
+// SelectOnLoad arms a by-name cursor placement for the next successful
+// load: the cursor lands on the entry whose Name() matches (directories
+// carry their trailing "/"), overriding the index restore. A name that is
+// not in the loaded listing leaves the cursor where the restore put it.
+func (m *Model) SelectOnLoad(name string) { m.pendingSelect = name }
 
 func (m Model) listItems() []list.Item {
 	listItems := make([]list.Item, 0, len(m.entries))

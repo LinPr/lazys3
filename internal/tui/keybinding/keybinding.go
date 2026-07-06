@@ -2,7 +2,7 @@
 //
 // Keys already claimed by the global dispatcher (tui.go): q, ctrl+c,
 // enter, right, backspace, left, p, t, T, ?, space, a, d, u, D, r, c, B,
-// s, y, v, V, w, tab.
+// s, y, v, V, l, tab.
 // The object-list component additionally claims the keys below; they are
 // exported so the help overlay and the component reference one source of
 // truth.
@@ -56,8 +56,8 @@ const (
 	VersioningToggle = "V"
 
 	// DualPaneToggle enters/exits the dual-pane (local ⇄ remote) layout
-	// (global, handled in tui.go).
-	DualPaneToggle = "w"
+	// (global, handled in tui.go; mnemonic: local).
+	DualPaneToggle = "l"
 
 	// PaneSwitch moves focus between the remote and local panes while
 	// dual-pane mode is active (global, handled in tui.go).

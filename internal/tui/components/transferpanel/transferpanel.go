@@ -143,6 +143,10 @@ type TransferDoneMsg struct {
 	// finish before its first 200ms poll, so the final summary must not
 	// depend on the poll loop having observed anything.
 	Note string
+	// Local marks an op that ran on the local filesystem (the dual-pane
+	// local delete): the remote listing is untouched, so the TUI refreshes
+	// the local pane instead of re-fetching the remote list.
+	Local bool
 }
 
 // TickMsg drives the panel's progress refresh loop. It is re-armed by

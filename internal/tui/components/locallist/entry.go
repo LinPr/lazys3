@@ -28,6 +28,10 @@ type Entry struct {
 	modTime time.Time
 	mode    fs.FileMode // kept for the preview metadata block
 	isDir   bool
+	// isSymlink records the link itself (isDir/size/modTime describe the
+	// stat'ed target): deleting one only unlinks it, and the local-delete
+	// confirm text says so.
+	isSymlink bool
 }
 
 // Name returns the base name; directories end with "/".
@@ -39,6 +43,10 @@ func (e Entry) Path() string { return e.path }
 func (e Entry) Size() int64        { return e.size }
 func (e Entry) ModTime() time.Time { return e.modTime }
 func (e Entry) IsDir() bool        { return e.isDir }
+
+// IsSymlink reports whether the entry is itself a symlink (the other
+// fields describe its target).
+func (e Entry) IsSymlink() bool { return e.isSymlink }
 
 func (e Entry) Title() string { return e.name }
 
@@ -106,15 +114,16 @@ func FetchDirCmd(dir string) tea.Cmd {
 		entries := make([]Entry, 0, len(dirents))
 		for _, de := range dirents {
 			p := filepath.Join(dir, de.Name())
+			isLink := de.Type()&fs.ModeSymlink != 0
 			var info fs.FileInfo
-			if de.Type()&fs.ModeSymlink != 0 {
+			if isLink {
 				// Follow the link target; a broken symlink keeps info nil
 				// and lists as a 0-byte file.
 				info, _ = os.Stat(p)
 			} else {
 				info, _ = de.Info()
 			}
-			e := Entry{name: de.Name(), path: p}
+			e := Entry{name: de.Name(), path: p, isSymlink: isLink}
 			if info != nil {
 				e.isDir = info.IsDir()
 				e.mode = info.Mode()

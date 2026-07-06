@@ -763,6 +763,11 @@ func (m *Model) promptVersionDelete(msg versionview.ActionMsg) tea.Cmd {
 // the completed op. Downloads/uploads don't need a refresh of the remote
 // list, but deletes/copies/renames/mb/rb/sync do.
 func (m *Model) refreshAfterOp(done transferpanel.TransferDoneMsg) tea.Cmd {
+	// A local-filesystem op (dual-pane local delete) never changes the
+	// remote listing: refresh the local pane only.
+	if done.Local {
+		return m.localList.Refresh()
+	}
 	var cmds []tea.Cmd
 	switch done.Op {
 	case transferpanel.OpDelete, transferpanel.OpCopy, transferpanel.OpRename,
@@ -929,7 +934,7 @@ func (m *Model) initComponentsSize(msg tea.WindowSizeMsg) {
 	m.setSize(msg.Width, msg.Height)
 
 	// A terminal too narrow for two readable panes drops dual mode
-	// entirely (re-enter with 'w' after widening).
+	// entirely (re-enter with 'l' after widening).
 	if m.dualPane && m.width < minDualPaneWidth {
 		m.exitDualPane()
 		m.statusBar.SetInfo(fmt.Sprintf("dual-pane closed: terminal too narrow (needs ≥%d cols)", minDualPaneWidth))

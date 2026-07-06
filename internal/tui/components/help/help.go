@@ -137,9 +137,15 @@ func DefaultBindings() []Group {
 		{
 			Name: "Dual-pane",
 			Bindings: []Binding{
-				{Key: "w", Desc: "toggle dual-pane layout (local ⇄ remote, needs ≥80 cols)"},
+				{Key: "l", Desc: "toggle dual-pane layout (local ⇄ remote, needs ≥80 cols)"},
 				{Key: "tab", Desc: "switch focus between remote and local panes"},
 				{Key: "c", Desc: "copy focused pane's selected file(s) to the other pane (download / upload)"},
+				{Key: "u", Desc: "local focus: upload selection to the remote pane's bucket/prefix (same as c)"},
+				{Key: "d", Desc: "remote focus: download selection into the local pane's directory (same as c)"},
+				{Key: "D", Desc: "local focus: delete selection (permanent, no trash; directories recursive)"},
+				{Key: "r", Desc: "local focus: rename the highlighted entry (same directory)"},
+				{Key: "B", Desc: "local focus: create a directory in the local pane"},
+				{Key: "y", Desc: "local focus: copy the highlighted entry's absolute path to the clipboard"},
 				{Key: "s", Desc: "sync prefilled: focused pane → other pane (editable)"},
 				{Key: "p", Desc: "preview replaces the unfocused pane"},
 			},

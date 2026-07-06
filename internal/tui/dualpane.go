@@ -1,7 +1,10 @@
-// Dual-pane (local ⇄ remote) mode: 'w' toggles the layout, 'tab' moves
-// focus between the remote browser and the local-filesystem pane, and 'c'
-// copies the focused pane's selection across to the other pane using the
-// existing transfer machinery (downloadCmds / objectlist.UploadCmd).
+// Dual-pane (local ⇄ remote) mode: 'l' toggles the layout, 'tab' moves
+// focus between the remote browser and the local-filesystem pane, and the
+// file-op keys act on the FOCUSED pane's selection with the OTHER pane's
+// location as the destination: 'c' copies across (either direction), 'u'
+// uploads from local focus, 'd' downloads from remote focus — all through
+// the existing transfer machinery (downloadCmds / uploadCmds). The local-
+// only ops (D/r/B/y with local focus) live in localops.go.
 package tui
 
 import (
@@ -16,6 +19,7 @@ import (
 	"github.com/LinPr/lazys3/internal/tui/components/locallist"
 	"github.com/LinPr/lazys3/internal/tui/components/objectlist"
 	"github.com/LinPr/lazys3/internal/tui/components/transferpanel"
+	"github.com/LinPr/lazys3/internal/tui/keybinding"
 	"github.com/LinPr/lazys3/internal/tui/state"
 )
 
@@ -32,8 +36,8 @@ const (
 // delegate's marker+name+size columns readable (mtime degrades off).
 const minDualPaneWidth = 80
 
-// remotePaneKeyHint is the status-bar nudge shown when a remote-only
-// file-op key is pressed while the local pane has focus.
+// remotePaneKeyHint is the status-bar nudge shown when a remote-only key
+// (v/V) is pressed while the local pane has focus.
 const remotePaneKeyHint = "remote-pane key — press tab to switch"
 
 // localFocused reports whether the local pane owns list-navigation keys.
@@ -52,7 +56,7 @@ func (m *Model) applyPaneFocus() {
 	m.localList.SetFocused(m.dualPane && m.paneFocus == focusLocal)
 }
 
-// handleDualPaneToggle enters or exits dual-pane mode ('w').
+// handleDualPaneToggle enters or exits dual-pane mode ('l').
 func (m *Model) handleDualPaneToggle() tea.Cmd {
 	if m.dualPane {
 		m.exitDualPane()
@@ -62,7 +66,7 @@ func (m *Model) handleDualPaneToggle() tea.Cmd {
 }
 
 // enterDualPane switches to the dual layout, starting on the remote pane.
-// The preview is closed (matching exit/switch) so 'w' visibly swaps the
+// The preview is closed (matching exit/switch) so 'l' visibly swaps the
 // preview for the local pane rather than rendering an identical layout.
 // The local pane's first directory fetch is lazy (EnsureLoaded), so its
 // last visited directory persists across toggles.
@@ -110,32 +114,57 @@ func (m *Model) handlePaneSwitch() {
 }
 
 // handleDualFileOp dispatches the file-op keys while dual-pane mode is
-// active: 'c' becomes the cross-pane copy and 's' the cross-pane sync
-// prefill; every other file-op key keeps its remote meaning when the
-// remote pane is focused and surfaces a hint when the local pane is (the
-// key must not leak into the local list, where e.g. 'D' would page).
+// active. Keys act on the FOCUSED pane's selection with the OTHER pane's
+// current location as the destination, never asking the user to type a
+// path both panes already know:
+//
+//	local focus:  c/u upload to the remote bucket/prefix, D deletes,
+//	              r renames, B mkdirs, y yanks the path (localops.go);
+//	              d hints (downloads come from the remote pane).
+//	remote focus: c/d download into the local pane's directory; the other
+//	              keys keep their remote meaning (handleFileOp);
+//	              u hints (uploads come from the local pane).
+//	both:         's' prefills the sync flow focused pane → other pane.
 func (m *Model) handleDualFileOp(key string) tea.Cmd {
-	switch key {
-	case "c":
-		if m.paneFocus == focusLocal {
+	if m.paneFocus == focusLocal {
+		switch key {
+		case "c", "u":
 			return m.promptCopyToRemote()
-		}
-		return m.promptCopyToLocal()
-	case "s":
-		return m.promptDualSync()
-	default:
-		if m.paneFocus == focusLocal {
+		case "d":
+			m.statusBar.SetInfo("press tab: d downloads from the remote pane")
+			return nil
+		case "s":
+			return m.promptDualSync()
+		case "D":
+			return m.promptLocalDelete()
+		case "r":
+			return m.promptLocalRename()
+		case "B":
+			return m.promptLocalMkdir()
+		case keybinding.PresignYank:
+			return m.localYankPath()
+		default:
 			m.statusBar.SetInfo(remotePaneKeyHint)
 			return nil
 		}
+	}
+	switch key {
+	case "c", "d":
+		return m.promptCopyToLocal()
+	case "u":
+		m.statusBar.SetInfo("press tab: u uploads from the local pane")
+		return nil
+	case "s":
+		return m.promptDualSync()
+	default:
 		return m.handleFileOp(key)
 	}
 }
 
-// promptCopyToLocal ('c' with the remote pane focused) confirms and
+// promptCopyToLocal ('c' or 'd' with the remote pane focused) confirms and
 // downloads the remote selection (files only; the highlighted item when
 // nothing is marked) into the local pane's current directory. Rows,
-// progress and cancellation are identical to the 'd' flow.
+// progress and cancellation are identical to the single-pane 'd' flow.
 func (m *Model) promptCopyToLocal() tea.Cmd {
 	if m.state != state.ActiveObjectList {
 		m.statusBar.SetInfo("open a bucket to copy from")
@@ -190,7 +219,7 @@ func (m *Model) promptCopyToLocal() tea.Cmd {
 	return nil
 }
 
-// promptCopyToRemote ('c' with the local pane focused) confirms and
+// promptCopyToRemote ('c' or 'u' with the local pane focused) confirms and
 // uploads the local selection (files only; the highlighted entry when
 // nothing is marked) to the remote pane's current s3://bucket/prefix.
 func (m *Model) promptCopyToRemote() tea.Cmd {

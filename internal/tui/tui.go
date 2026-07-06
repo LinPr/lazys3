@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"path"
 	"strings"
 	"time"
@@ -73,6 +74,13 @@ func NewLazyS3Model() Model {
 	// Work around a bubbletea-beta1 renderer bug under GNU screen / the
 	// Linux console before tea.Program picks its renderer (see renderer.go).
 	ensureCompatRenderer()
+	// The local pane's first load is the lazys3 process's working
+	// directory, captured once here (EnsureLoaded falls back to $HOME
+	// then "/" when Getwd fails).
+	localList := locallist.NewModel()
+	if wd, err := os.Getwd(); err == nil && wd != "" {
+		localList.SetStartDir(wd)
+	}
 	return Model{
 		state:         state.ActiveProfileList,
 		profileList:   profilelist.NewModel(),
@@ -86,7 +94,7 @@ func NewLazyS3Model() Model {
 		historyView:   historyview.NewModel(),
 		versionView:   versionview.NewModel(),
 		historyStore:  history.NewStore(history.DefaultPath()),
-		localList:     locallist.NewModel(),
+		localList:     localList,
 	}
 }
 
@@ -194,7 +202,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cancelAllOnQuit()
 				return m, tea.Quit
 
-			// w toggles the dual-pane (local ⇄ remote) layout; tab moves
+			// l toggles the dual-pane (local ⇄ remote) layout; tab moves
 			// focus between the panes while it is active. Outside dual
 			// mode tab is a handled no-op so it never pages the list.
 			case keybinding.DualPaneToggle:
@@ -405,11 +413,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch {
 		case errors.Is(tmsg.Err, context.Canceled):
 			// User-cancelled: the row already renders "canceled"; no
-			// error banner, no refresh.
+			// error banner, no remote refresh. A cancelled LOCAL delete
+			// may still have removed some entries, so the local pane is
+			// refreshed to reflect whatever actually happened.
+			if tmsg.Local {
+				if cmd := m.localList.Refresh(); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+			}
 		case tmsg.Err != nil:
 			cmds = append(cmds, func() tea.Msg {
 				return types.ErrMsg{Err: tmsg.Err}
 			})
+			// A partially-failed local delete removed everything before
+			// the failing entry: refresh the pane anyway.
+			if tmsg.Local {
+				if cmd := m.localList.Refresh(); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+			}
 		default:
 			// A finished download batch keeps the listing unchanged, so
 			// refreshAfterOp skips it; clear the multi-selection here so
@@ -417,9 +439,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if tmsg.Op == transferpanel.OpDownload {
 				m.objectlist.ClearSelection()
 			}
-			// Mirror for a finished upload: clear the local pane's marks
-			// (harmless in single-pane, where the selection is empty).
-			if tmsg.Op == transferpanel.OpUpload {
+			// Mirror for a finished upload or local delete: clear the
+			// local pane's marks (harmless in single-pane, where the
+			// selection is empty).
+			if tmsg.Op == transferpanel.OpUpload || tmsg.Local {
 				m.localList.ClearSelection()
 			}
 			// Refresh whichever list the completed op touched.
@@ -461,6 +484,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		newHV, cmd := m.historyView.Update(tmsg)
 		m.historyView = newHV
 		cmds = append(cmds, cmd)
+	case localFSDoneMsg:
+		// A local rename/mkdir finished: surface a failure, keep the
+		// cursor on the touched entry on success, and refresh the pane
+		// either way (the op may have partially applied).
+		if tmsg.err != nil {
+			cmds = append(cmds, errCmd(fmt.Errorf("%s: %w", tmsg.op, tmsg.err)))
+		} else if tmsg.name != "" && tmsg.dir == m.localList.Dir() {
+			m.localList.SelectOnLoad(tmsg.name)
+		}
+		if cmd := m.localList.Refresh(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case locallist.LoadedMsg:
 		// Local directory fetch results are routed by type (never by
 		// focus): the pane commits the navigation on success and keeps

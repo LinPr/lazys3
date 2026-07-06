@@ -1,6 +1,7 @@
 package locallist
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -283,6 +284,59 @@ func TestEnsureLoadedOnce(t *testing.T) {
 	m = load(t, m, sampleDir(t))
 	if cmd := m.EnsureLoaded(); cmd != nil {
 		t.Error("EnsureLoaded after a successful load should return nil")
+	}
+}
+
+func TestEnsureLoadedUsesStartDir(t *testing.T) {
+	dir := sampleDir(t)
+	m := NewModel()
+	m.SetStartDir(dir)
+	cmd := m.EnsureLoaded()
+	if cmd == nil {
+		t.Fatal("first EnsureLoaded should return a fetch cmd")
+	}
+	msg, ok := cmd().(LoadedMsg)
+	if !ok {
+		t.Fatalf("fetch produced %T, want LoadedMsg", cmd())
+	}
+	if msg.Err != nil {
+		t.Fatal(msg.Err)
+	}
+	if msg.Dir != dir {
+		t.Fatalf("first fetch dir = %q, want the start dir %q", msg.Dir, dir)
+	}
+}
+
+func TestSelectOnLoadPlacesCursorByName(t *testing.T) {
+	dir := sampleDir(t)
+	m := NewModel()
+	m.SetSize(80, 20)
+	m.SelectOnLoad("mid.txt")
+	m = load(t, m, dir)
+	if e := m.GetSelectedEntry(); e == nil || e.Name() != "mid.txt" {
+		t.Fatalf("cursor = %v, want mid.txt", e)
+	}
+	// An unknown name leaves the cursor alone (top after a plain load).
+	m.SelectOnLoad("missing.txt")
+	m = load(t, m, dir)
+	if e := m.GetSelectedEntry(); e == nil || e.Name() != "data/" {
+		t.Fatalf("cursor = %v, want the top entry data/", e)
+	}
+}
+
+// TestFailedLoadClearsPendingSelect pins that a failed fetch drops an
+// armed SelectOnLoad: it must not fire on the next unrelated load.
+func TestFailedLoadClearsPendingSelect(t *testing.T) {
+	dir := sampleDir(t)
+	m := NewModel()
+	m.SetSize(80, 20)
+	m = load(t, m, dir)
+	m.SelectOnLoad("mid.txt")
+	newModel, _ := m.Update(LoadedMsg{Dir: dir, Err: errors.New("boom")})
+	m = newModel
+	m = load(t, m, dir)
+	if e := m.GetSelectedEntry(); e == nil || e.Name() != "data/" {
+		t.Fatalf("cursor = %v, want the top entry data/ (stale pendingSelect fired)", e)
 	}
 }
 

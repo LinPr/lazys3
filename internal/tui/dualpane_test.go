@@ -18,7 +18,7 @@ import (
 )
 
 // dualModel returns a model sized wide enough for dual-pane mode with the
-// mode already entered (EnsureLoaded's home fetch cmd is dropped) and the
+// mode already entered (EnsureLoaded's cwd fetch cmd is dropped) and the
 // local pane committed to a temp dir containing files.
 func dualModel(t *testing.T, files ...string) (Model, string) {
 	t.Helper()
@@ -30,12 +30,12 @@ func dualModel(t *testing.T, files ...string) (Model, string) {
 	}
 	m := NewLazyS3Model()
 	m = updateModel(t, m, tea.WindowSizeMsg{Width: 100, Height: 30})
-	m = updateModel(t, m, keyPress('w'))
+	m = updateModel(t, m, keyPress('l'))
 	if !m.dualPane {
-		t.Fatal("'w' did not enter dual-pane mode at 100 cols")
+		t.Fatal("'l' did not enter dual-pane mode at 100 cols")
 	}
 	// Commit the temp dir as the local pane's listing (bypassing the
-	// EnsureLoaded home fetch).
+	// EnsureLoaded cwd fetch).
 	m = updateModel(t, m, locallist.FetchDirCmd(dir)())
 	if m.localList.Dir() != dir {
 		t.Fatalf("local dir = %q, want %q", m.localList.Dir(), dir)
@@ -78,12 +78,12 @@ func transferAdds(cmd tea.Cmd) []transferpanel.TransferAddMsg {
 	return nil
 }
 
-// TestDualPaneRefusedWhenNarrow pins the 80-col minimum: 'w' at 79 cols
+// TestDualPaneRefusedWhenNarrow pins the 80-col minimum: 'l' at 79 cols
 // must not enter dual mode and must leave a status-bar hint.
 func TestDualPaneRefusedWhenNarrow(t *testing.T) {
 	m := NewLazyS3Model()
 	m = updateModel(t, m, tea.WindowSizeMsg{Width: 79, Height: 30})
-	m = updateModel(t, m, keyPress('w'))
+	m = updateModel(t, m, keyPress('l'))
 	if m.dualPane {
 		t.Fatal("dual-pane entered below the 80-col minimum")
 	}
@@ -92,7 +92,7 @@ func TestDualPaneRefusedWhenNarrow(t *testing.T) {
 	}
 }
 
-// TestDualPaneToggleAndAutoExit pins 'w' enter/exit and the auto-exit on a
+// TestDualPaneToggleAndAutoExit pins 'l' enter/exit and the auto-exit on a
 // narrow resize while dual mode is active.
 func TestDualPaneToggleAndAutoExit(t *testing.T) {
 	m, _ := dualModel(t, "a.txt")
@@ -103,17 +103,17 @@ func TestDualPaneToggleAndAutoExit(t *testing.T) {
 		t.Fatal("local pane focused on entry")
 	}
 
-	// 'w' again exits.
-	m = updateModel(t, m, keyPress('w'))
+	// 'l' again exits.
+	m = updateModel(t, m, keyPress('l'))
 	if m.dualPane {
-		t.Fatal("'w' did not exit dual-pane mode")
+		t.Fatal("'l' did not exit dual-pane mode")
 	}
 	if !m.objectlist.Focused() {
 		t.Fatal("remote lists must return to focused after exit")
 	}
 
 	// Re-enter, then shrink below the minimum: auto-exit.
-	m = updateModel(t, m, keyPress('w'))
+	m = updateModel(t, m, keyPress('l'))
 	if !m.dualPane {
 		t.Fatal("re-entering dual-pane failed")
 	}
@@ -158,7 +158,7 @@ func TestTabSwitchesFocus(t *testing.T) {
 	}
 
 	// Single-pane: tab is a handled no-op (no crash, no mode change).
-	m = updateModel(t, m, keyPress('w')) // exit dual
+	m = updateModel(t, m, keyPress('l')) // exit dual
 	m = updateModel(t, m, tabPress())
 	if m.dualPane {
 		t.Fatal("tab must not enter dual-pane mode")
@@ -383,14 +383,14 @@ func TestLocalFilterSwallowsGlobalHotkeys(t *testing.T) {
 	}
 }
 
-// TestRemoteOnlyKeyHintWhenLocalFocused pins that remote-only file-op keys
-// pressed with local focus produce a status-bar hint and never leak into
-// the local list (where 'D' would page).
+// TestRemoteOnlyKeyHintWhenLocalFocused pins that the remaining remote-only
+// keys (v/V) pressed with local focus produce a status-bar hint and never
+// leak into the local list.
 func TestRemoteOnlyKeyHintWhenLocalFocused(t *testing.T) {
 	m, _ := dualModel(t, "a.txt")
 	m = updateModel(t, m, tabPress())
 
-	for _, k := range []rune{'D', 'd', 'u', 'r', 'B', 'y', 'v', 'V'} {
+	for _, k := range []rune{'v', 'V'} {
 		m.statusBar.SetInfo("")
 		m = updateModel(t, m, keyPress(k))
 		if m.modal.IsVisible() {
@@ -399,6 +399,180 @@ func TestRemoteOnlyKeyHintWhenLocalFocused(t *testing.T) {
 		if !strings.Contains(m.statusBar.Info(), "tab") {
 			t.Fatalf("%q: status info = %q, want the remote-pane hint", k, m.statusBar.Info())
 		}
+	}
+}
+
+// TestDualMismatchedComboHints pins the cross-direction hints: 'u' needs
+// the local pane (upload source) and 'd' the remote pane (download source);
+// pressing them on the wrong focus nudges toward tab instead of opening a
+// modal.
+func TestDualMismatchedComboHints(t *testing.T) {
+	m, _ := dualModel(t, "a.txt")
+	m.state = state.ActiveObjectList
+	m.selectedBucket = "bkt"
+	m.objectlist.SetObjects([]objectlist.Object{objectlist.NewFileObject("f.txt")})
+
+	// Remote focus: 'u' hints instead of opening the upload modal.
+	m = updateModel(t, m, keyPress('u'))
+	if m.modal.IsVisible() {
+		t.Fatal("'u' opened a modal with remote focus in dual mode")
+	}
+	if info := m.statusBar.Info(); !strings.Contains(info, "press tab") || !strings.Contains(info, "uploads from the local pane") {
+		t.Fatalf("'u' status info = %q, want the upload hint", info)
+	}
+
+	// Local focus: 'd' hints instead of opening the download modal.
+	m = updateModel(t, m, tabPress())
+	m = updateModel(t, m, keyPress('d'))
+	if m.modal.IsVisible() {
+		t.Fatal("'d' opened a modal with local focus in dual mode")
+	}
+	if info := m.statusBar.Info(); !strings.Contains(info, "press tab") || !strings.Contains(info, "downloads from the remote pane") {
+		t.Fatalf("'d' status info = %q, want the download hint", info)
+	}
+}
+
+// TestDualUploadKeyLocalFocused pins the focus-scoped 'u': with the local
+// pane focused it is the same cross-pane upload as 'c' — confirm modal
+// against the remote bucket/prefix, one upload row per file, no path typing.
+func TestDualUploadKeyLocalFocused(t *testing.T) {
+	m, dir := dualModel(t, "a.txt")
+	m.state = state.ActiveObjectList
+	m.selectedBucket = "bkt"
+	m.selectedObject = "pre/"
+	m = updateModel(t, m, tabPress())
+
+	m = updateModel(t, m, keyPress('u'))
+	if !m.modal.IsVisible() {
+		t.Fatal("'u' with local focus did not open the confirm modal")
+	}
+	if !strings.Contains(m.modal.Body(), "s3://bkt/pre/") {
+		t.Fatalf("modal body = %q, want the remote destination", m.modal.Body())
+	}
+
+	nm, cmd := m.Update(keyPress('y'))
+	m = nm.(Model)
+	adds := transferAdds(cmd)
+	if len(adds) != 1 {
+		t.Fatalf("confirm produced %d transfer rows, want 1", len(adds))
+	}
+	tr := adds[0].Transfer
+	if tr.Op != transferpanel.OpUpload {
+		t.Fatalf("transfer op = %q, want upload", tr.Op)
+	}
+	wantLabel := filepath.Join(dir, "a.txt") + " -> s3://bkt/pre/a.txt"
+	if tr.Label != wantLabel {
+		t.Fatalf("transfer label = %q, want %q", tr.Label, wantLabel)
+	}
+	tr.Cancel()
+}
+
+// TestDualDownloadKeyRemoteFocused pins the focus-scoped 'd': with the
+// remote pane focused it downloads the selection into the local pane's
+// current directory (same as 'c'), skipping the destination-typing modal.
+func TestDualDownloadKeyRemoteFocused(t *testing.T) {
+	m, dir := dualModel(t, "existing.txt")
+	m.state = state.ActiveObjectList
+	m.selectedBucket = "bkt"
+	m.objectlist.SetObjects([]objectlist.Object{objectlist.NewFileObject("f.txt")})
+
+	m = updateModel(t, m, keyPress('d'))
+	if !m.modal.IsVisible() {
+		t.Fatal("'d' with remote focus did not open the confirm modal")
+	}
+	if !strings.Contains(m.modal.Body(), dir) {
+		t.Fatalf("modal body = %q, want the local pane dir %q", m.modal.Body(), dir)
+	}
+
+	nm, cmd := m.Update(keyPress('y'))
+	m = nm.(Model)
+	adds := transferAdds(cmd)
+	if len(adds) != 1 {
+		t.Fatalf("confirm produced %d transfer rows, want 1", len(adds))
+	}
+	tr := adds[0].Transfer
+	if tr.Op != transferpanel.OpDownload {
+		t.Fatalf("transfer op = %q, want download", tr.Op)
+	}
+	wantLabel := "s3://bkt/f.txt -> " + filepath.Join(dir, "f.txt")
+	if tr.Label != wantLabel {
+		t.Fatalf("transfer label = %q, want %q", tr.Label, wantLabel)
+	}
+	tr.Cancel()
+}
+
+// TestSinglePaneDownloadUploadUnchanged pins that outside dual mode the
+// 'd'/'u' keys keep their original path-typing modal flows.
+func TestSinglePaneDownloadUploadUnchanged(t *testing.T) {
+	m := NewLazyS3Model()
+	m = updateModel(t, m, tea.WindowSizeMsg{Width: 100, Height: 30})
+	m.state = state.ActiveObjectList
+	m.selectedBucket = "bkt"
+	m.objectlist.SetObjects([]objectlist.Object{objectlist.NewFileObject("f.txt")})
+
+	m = updateModel(t, m, keyPress('d'))
+	if m.modal.Title() != "Download to" {
+		t.Fatalf("single-pane 'd' modal title = %q, want Download to", m.modal.Title())
+	}
+	m = updateModel(t, m, tea.KeyPressMsg(tea.Key{Code: tea.KeyEscape}))
+	if m.modal.IsVisible() {
+		t.Fatal("esc did not close the download modal")
+	}
+
+	m = updateModel(t, m, keyPress('u'))
+	if m.modal.Title() != "Upload from" {
+		t.Fatalf("single-pane 'u' modal title = %q, want Upload from", m.modal.Title())
+	}
+}
+
+// TestWKeyNoLongerTogglesDualPane pins the rebind: 'w' is unclaimed and
+// must neither enter nor exit dual-pane mode.
+func TestWKeyNoLongerTogglesDualPane(t *testing.T) {
+	m := NewLazyS3Model()
+	m = updateModel(t, m, tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = updateModel(t, m, keyPress('w'))
+	if m.dualPane {
+		t.Fatal("'w' still enters dual-pane mode")
+	}
+	m = updateModel(t, m, keyPress('l'))
+	if !m.dualPane {
+		t.Fatal("'l' did not enter dual-pane mode")
+	}
+	m = updateModel(t, m, keyPress('w'))
+	if !m.dualPane {
+		t.Fatal("'w' still exits dual-pane mode")
+	}
+}
+
+// TestLocalPaneStartsInProcessCwd pins the local pane's first load: the
+// lazys3 process's working directory, captured at NewLazyS3Model.
+func TestLocalPaneStartsInProcessCwd(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	m := NewLazyS3Model()
+	m = updateModel(t, m, tea.WindowSizeMsg{Width: 100, Height: 30})
+	nm, cmd := m.Update(keyPress('l'))
+	m = nm.(Model)
+	var loaded *locallist.LoadedMsg
+	for _, msg := range collectMsgs(cmd) {
+		if lm, ok := msg.(locallist.LoadedMsg); ok {
+			loaded = &lm
+		}
+	}
+	if loaded == nil {
+		t.Fatal("'l' did not kick off the local pane's first load")
+	}
+	m = updateModel(t, m, *loaded)
+	want, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := filepath.EvalSymlinks(m.localList.Dir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("local pane first dir = %q, want the process cwd %q", got, want)
 	}
 }
 
@@ -420,7 +594,7 @@ func TestDualPaneViewRendersBothPanes(t *testing.T) {
 		t.Fatal("dual view missing the local pane")
 	}
 
-	m = updateModel(t, m, keyPress('w'))
+	m = updateModel(t, m, keyPress('l'))
 	out = m.View()
 	if strings.Contains(out, "a.txt") {
 		t.Fatal("single-pane view still renders the local pane")
@@ -481,7 +655,7 @@ func TestLocalLoadRefreshesPreview(t *testing.T) {
 	}
 }
 
-// TestEnterDualPaneClosesPreview pins that 'w' with the single-pane
+// TestEnterDualPaneClosesPreview pins that 'l' with the single-pane
 // preview open closes it (matching exit/switch), so entering dual mode is
 // visible rather than rendering an identical half-width layout.
 func TestEnterDualPaneClosesPreview(t *testing.T) {
@@ -491,9 +665,9 @@ func TestEnterDualPaneClosesPreview(t *testing.T) {
 	if !m.previewPanel.IsVisible() {
 		t.Fatal("'p' did not open the preview")
 	}
-	m = updateModel(t, m, keyPress('w'))
+	m = updateModel(t, m, keyPress('l'))
 	if !m.dualPane {
-		t.Fatal("'w' did not enter dual-pane mode")
+		t.Fatal("'l' did not enter dual-pane mode")
 	}
 	if m.previewPanel.IsVisible() {
 		t.Fatal("entering dual-pane left the preview open")

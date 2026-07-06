@@ -189,9 +189,24 @@ func (m Model) Value() string { return m.input.Value() }
 func (m *Model) SetSize(w, h int) {
 	m.width = w
 	m.height = h
-	if w > 4 {
-		m.input.SetWidth(w - 4)
+	// Size the textinput to the floating box interior (box width minus 2
+	// border and 2 padding columns, minus the extra cursor cell the
+	// textinput renders beyond its width) so its padded view never wraps.
+	m.input.SetWidth(m.boxWidth() - 5)
+}
+
+// boxWidth returns the floating-box width: min(70, terminal-4) with a floor
+// of 20, so the box always leaves a margin of layout visible around it. An
+// unknown terminal size (tests, pre-WindowSizeMsg) keeps the 70-col default.
+func (m Model) boxWidth() int {
+	w := 70
+	if m.width > 0 && m.width-4 < w {
+		w = m.width - 4
 	}
+	if w < 20 {
+		w = 20
+	}
+	return w
 }
 
 // View renders the modal. It is the caller's responsibility (tui.go) to
@@ -200,13 +215,7 @@ func (m Model) View() string {
 	if !m.visible {
 		return ""
 	}
-	width := m.width
-	if width < 40 {
-		width = 40
-	}
-	if width > 80 {
-		width = 80
-	}
+	width := m.boxWidth()
 
 	var content string
 	switch m.mode {
@@ -245,22 +254,12 @@ func (m Model) View() string {
 		BorderForeground(lipgloss.Color("#3b82f6")).
 		Width(width)
 
-	rendered := box.Render(
+	// Return just the bordered box: tui.go composites it centered over the
+	// live layout via style.PlaceOverlay, so the panes and status bar stay
+	// visible around the floating modal.
+	return box.Render(
 		lipgloss.JoinVertical(lipgloss.Left, header, body, hintStyle),
 	)
-
-	// Center on the screen. The overlay is rendered on a full-canvas
-	// background so the TUI's View() can swap it in for the whole layout
-	// when the modal is visible (see tui.go).
-	if m.height > 0 {
-		dimBg := lipgloss.NewStyle().Background(lipgloss.Color("#1a1a1a"))
-		rendered = lipgloss.Place(m.width, m.height,
-			lipgloss.Center, lipgloss.Center,
-			rendered,
-			lipgloss.WithWhitespaceStyle(dimBg),
-		)
-	}
-	return rendered
 }
 
 // Title returns the current modal title (used by tests / debugging).

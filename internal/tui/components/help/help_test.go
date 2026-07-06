@@ -155,6 +155,93 @@ func TestOpenResetsScroll(t *testing.T) {
 	}
 }
 
+// helpBoxWidth extracts the rendered box's outer width from a full-canvas
+// view: the top border line ("╭───╮"), stripped of ANSI and the centering
+// whitespace around it.
+func helpBoxWidth(t *testing.T, view string) int {
+	t.Helper()
+	for _, line := range strings.Split(stripANSI(view), "\n") {
+		if strings.Contains(line, "╭") {
+			return lipgloss.Width(strings.TrimSpace(line))
+		}
+	}
+	t.Fatal("no top border line found in the help view")
+	return 0
+}
+
+// stripANSI removes escape sequences so structural checks see plain text.
+func stripANSI(s string) string {
+	var b strings.Builder
+	inEsc := false
+	for _, r := range s {
+		switch {
+		case inEsc:
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+				inEsc = false
+			}
+		case r == '\x1b':
+			inEsc = true
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// TestBoxWidthConstantWhileScrolling pins ISSUE 4: the box border must not
+// resize as the user pages through the content — its width is computed once
+// from the longest line of the FULL content, not the visible window.
+func TestBoxWidthConstantWhileScrolling(t *testing.T) {
+	for _, size := range []struct{ w, h int }{{120, 15}, {100, 12}, {80, 20}} {
+		m := NewModel()
+		m.SetSize(size.w, size.h)
+		m.Show()
+		want := helpBoxWidth(t, m.View())
+		step := 0
+		check := func(key string) {
+			m.HandleKey(key)
+			step++
+			if got := helpBoxWidth(t, m.View()); got != want {
+				t.Fatalf("%dx%d: box width = %d at step %d (key %q, offset %d), want constant %d",
+					size.w, size.h, got, step, key, m.offset, want)
+			}
+		}
+		// Walk every offset to the bottom, then page and jump around.
+		m2 := m
+		m2.HandleKey("G")
+		bottom := m2.offset
+		for i := 0; i < bottom; i++ {
+			check("j")
+		}
+		check("G")
+		check("g")
+		check("pgdown")
+		check("pgdown")
+		check("pgup")
+		check("G")
+	}
+}
+
+// TestBoxWidthConstantFits80Cols pins that the fixed-width box still fits a
+// narrow terminal: on 80 cols every rendered line stays within 80 cells at
+// every scroll position.
+func TestBoxWidthConstantFits80Cols(t *testing.T) {
+	m := NewModel()
+	m.SetSize(80, 15)
+	m.Show()
+	keys := []string{"", "j", "j", "pgdown", "G", "g"}
+	for _, k := range keys {
+		if k != "" {
+			m.HandleKey(k)
+		}
+		for i, line := range strings.Split(m.View(), "\n") {
+			if w := lipgloss.Width(line); w > 80 {
+				t.Fatalf("after %q: line %d width = %d, exceeds 80", k, i, w)
+			}
+		}
+	}
+}
+
 // Test80ColWidthFit pins the horizontal fit: on an 80-col terminal every
 // line is truncated into the box, so the rendered canvas is exactly 80
 // cells wide.

@@ -996,28 +996,32 @@ func (m Model) composeView(mainContent string) string {
 		bottom,
 	)
 
-	// Modal and help are full-canvas overlays (their View() returns a
-	// width×height canvas with the content centered via lipgloss.Place).
-	// When either is visible we return its canvas directly so the overlay
-	// lands in the centre of the screen rather than being concatenated
-	// below the layout (which would double the canvas height and push the
-	// overlay off-screen). Help takes precedence over the modal so the
-	// user can always summon the cheat sheet, even with a modal open.
+	// Help and history are full-canvas overlays (their View() returns a
+	// width×height canvas with the content centered via lipgloss.Place),
+	// so they replace the layout outright. Help takes precedence over the
+	// modal so the user can always summon the cheat sheet, even with a
+	// modal open.
 	if m.help.IsVisible() {
 		return m.help.View()
 	}
 	if m.historyView.IsVisible() {
 		return m.historyView.View()
 	}
-	// The modal outranks the versions overlay: a modal opened from an
-	// overlay row action (download/restore/delete) must be the visible,
-	// key-receiving surface. The overlay stays open underneath and
-	// reappears when the modal resolves (confirm or esc).
-	if m.modal.IsVisible() {
-		return m.modal.View()
-	}
+	// The versions overlay is also full-canvas, but the modal outranks it:
+	// a modal opened from an overlay row action (download/restore/delete)
+	// must be the visible, key-receiving surface, floating over the still-
+	// rendered overlay underneath.
 	if m.versionView.IsVisible() {
-		return m.versionView.View()
+		layout = m.versionView.View()
+	}
+	// The modal is a floating box composited centered ON TOP of the live
+	// layout, so the panes and status bar stay visible around it; closing
+	// it just removes the box, revealing the untouched layout.
+	if m.modal.IsVisible() {
+		box := m.modal.View()
+		x := (m.width - lipgloss.Width(box)) / 2
+		y := (m.height - lipgloss.Height(box)) / 2
+		layout = style.PlaceOverlay(layout, box, x, y)
 	}
 
 	return layout

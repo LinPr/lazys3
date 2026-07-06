@@ -47,6 +47,34 @@ func TestConfirmModalWrapsLongURL(t *testing.T) {
 	}
 }
 
+// TestInputModalNoWrappedRow verifies the textinput is sized to the floating
+// box interior: an input modal must render exactly 5 rows (2 border, header,
+// input, hint) with no wrapped junk row, at any terminal width.
+func TestInputModalNoWrappedRow(t *testing.T) {
+	for _, size := range [][2]int{{80, 24}, {120, 40}, {60, 20}} {
+		m := NewModel()
+		m.SetSize(size[0], size[1])
+		m.Show("Download to", "/tmp/some/default/path.txt", nil)
+
+		// Long typed values must scroll inside the textinput, not wrap.
+		for _, val := range []string{"", strings.Repeat("/very/long/path", 20)} {
+			m.input.SetValue(val)
+			view := m.View()
+			if got := lipgloss.Height(view); got != 5 {
+				t.Fatalf("at %dx%d (value len %d) input modal renders %d rows, want 5:\n%s",
+					size[0], size[1], len(val), got, view)
+			}
+			box := m.boxWidth()
+			for i, line := range strings.Split(view, "\n") {
+				if w := lipgloss.Width(line); w > box {
+					t.Fatalf("at %dx%d line %d is %d cols wide, want <= %d",
+						size[0], size[1], i, w, box)
+				}
+			}
+		}
+	}
+}
+
 // stripANSI removes escape sequences so content checks see plain text.
 func stripANSI(s string) string {
 	var b strings.Builder

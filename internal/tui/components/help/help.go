@@ -306,7 +306,26 @@ func (m Model) View() string {
 	}
 
 	lines := m.renderLines()
+	// The box width is fixed from the longest line of the FULL content
+	// (already clamped to the terminal width by renderLines), so the
+	// border never changes size while the user scrolls a window of it.
+	boxW := 0
+	for _, l := range lines {
+		if w := lipgloss.Width(l); w > boxW {
+			boxW = w
+		}
+	}
 	if avail := m.contentHeight(); avail > 0 && len(lines) > avail {
+		// Reserve room for the widest footer the pager can produce so the
+		// arrows appearing/disappearing never widen the box mid-scroll.
+		total := len(lines)
+		maxFooter := fmt.Sprintf("%d-%d of %d ↑ ↓ · j/k scroll · ?/esc close", total, total, total)
+		if maxW := m.width - boxStyle.GetHorizontalFrameSize(); m.width > 0 && maxW > 0 {
+			maxFooter = ansi.Truncate(maxFooter, maxW, "…")
+		}
+		if w := lipgloss.Width(maxFooter); w > boxW {
+			boxW = w
+		}
 		page := avail - 1 // the footer takes the last row
 		showFooter := true
 		if page < 1 {
@@ -342,6 +361,12 @@ func (m Model) View() string {
 			window = append(window, dimStyle.Render(footer))
 		}
 		lines = window
+	}
+
+	// Pad every visible line to the fixed content width so the rendered
+	// box tracks the full content's widest line, not the visible window's.
+	for i, l := range lines {
+		lines[i] = padRight(l, boxW)
 	}
 
 	box := boxStyle.Render(strings.Join(lines, "\n"))

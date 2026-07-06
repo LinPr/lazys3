@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
+	"github.com/aws/smithy-go/logging"
 )
 
 // defaultRegion is used when no region can be inferred from the user, the
@@ -151,6 +153,14 @@ func NewS3Client(ctx context.Context, option S3Option) (*S3Store, error) {
 	}
 
 	var optFns []func(*config.LoadOptions) error
+	// Route SDK warnings (e.g. "Response has no supported checksum") through
+	// the standard logger instead of stderr: stderr writes corrupt the TUI's
+	// rendering, while the standard logger already goes to debug.log or
+	// /dev/null depending on --debug.
+	optFns = append(optFns, config.WithLogger(logging.LoggerFunc(
+		func(classification logging.Classification, format string, v ...any) {
+			log.Printf("SDK %s "+format, append([]any{string(classification)}, v...)...)
+		})))
 	if option.Region != "" {
 		optFns = append(optFns, config.WithRegion(option.Region))
 	}

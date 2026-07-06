@@ -249,31 +249,24 @@ func TestDualCopyLocalToRemoteNeedsBucket(t *testing.T) {
 }
 
 // TestDualCopyRemoteToLocal pins the remote→local 'c' flow: the confirm
-// modal targets the local pane's directory and confirming emits download
-// rows.
+// modal targets the local pane's directory, and a directory-only selection
+// is no longer skipped — it confirms as a folder download (recursive sync).
 func TestDualCopyRemoteToLocal(t *testing.T) {
 	m, dir := dualModel(t, "existing.txt")
 	m.state = state.ActiveObjectList
 	m.selectedBucket = "bkt"
-	// Directory-only selection errors out (v1 skips directories).
 	m.objectlist.SetObjects([]objectlist.Object{objectlist.NewDirObject("d1/")})
-	nm, cmd := m.Update(keyPress('c'))
-	m = nm.(Model)
-	if m.modal.IsVisible() {
-		t.Fatal("'c' opened a modal for a directory-only selection")
+	m = updateModel(t, m, keyPress('c'))
+	if !m.modal.IsVisible() {
+		t.Fatal("'c' did not open the confirm modal for a directory selection")
 	}
-	foundErr := false
-	for _, msg := range collectMsgs(cmd) {
-		if em, ok := msg.(types.ErrMsg); ok && strings.Contains(em.Err.Error(), "directories are skipped") {
-			foundErr = true
-		}
-	}
-	if !foundErr {
-		t.Fatal("directory-only 'c' did not surface the skip error")
+	if want := "Download 1 folder(s) to " + dir + "?"; !strings.Contains(m.modal.Body(), want) {
+		t.Fatalf("modal body = %q, want %q", m.modal.Body(), want)
 	}
 	if m.localList.Dir() != dir {
 		t.Fatalf("local dir changed to %q", m.localList.Dir())
 	}
+	m = updateModel(t, m, tea.KeyPressMsg(tea.Key{Code: tea.KeyEscape}))
 }
 
 // TestDualSyncPrefill pins the 's' prefill: focused pane is the source,

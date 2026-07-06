@@ -3,10 +3,12 @@
 // File Ops, Selection, Search, Panels, Quit), so users have a single
 // in-app cheat sheet they can summon with `?`.
 //
-// The overlay is a passive component: it owns a `visible` flag and a
-// `groups` slice, and renders a bordered, centered box. The TUI's Update
-// toggles visibility on `?` and overlays the rendered box on top of the
-// main layout via lipgloss.Place.
+// The overlay is a mostly-passive component: it owns a `visible` flag, a
+// `groups` slice and a scroll offset, and renders a bordered, centered
+// box. The TUI's Update toggles visibility on `?` and overlays the
+// rendered box on top of the main layout via lipgloss.Place. When the
+// content is taller than the terminal, the box shows a window of it with
+// a position footer; the TUI routes j/k/pgup/pgdown (etc.) to HandleKey.
 //
 // The bindings list is built once from the TUI's actual key branches (see
 // DefaultBindings) so the help text stays in sync with handler.go without
@@ -15,10 +17,12 @@
 package help
 
 import (
+	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // Binding is a single keybinding entry rendered as "key  description".
@@ -34,12 +38,14 @@ type Group struct {
 }
 
 // Model is the help overlay state. It is a value type; toggling visibility
-// is done via Toggle / Show / Hide on a pointer receiver.
+// is done via Toggle / Show / Hide on a pointer receiver. offset is the
+// first visible content line; it resets to 0 on every open.
 type Model struct {
 	visible bool
 	groups  []Group
 	width   int
 	height  int
+	offset  int
 }
 
 // NewModel returns a help overlay preloaded with the default lazys3
@@ -66,10 +72,57 @@ func (m *Model) SetSize(w, h int) {
 	m.height = h
 }
 
-// Show / Hide / Toggle control overlay visibility.
-func (m *Model) Show()   { m.visible = true }
-func (m *Model) Hide()   { m.visible = false }
-func (m *Model) Toggle() { m.visible = !m.visible }
+// Show / Hide / Toggle control overlay visibility. Opening always starts
+// at the top of the content.
+func (m *Model) Show() {
+	m.visible = true
+	m.offset = 0
+}
+
+func (m *Model) Hide() { m.visible = false }
+
+func (m *Model) Toggle() {
+	m.visible = !m.visible
+	if m.visible {
+		m.offset = 0
+	}
+}
+
+// HandleKey scrolls the overlay (j/k, arrows, pgup/pgdown, g/G). Keys are
+// no-ops while the content fits the box; unrecognised keys are swallowed
+// by design (the TUI forwards nothing else while the overlay is visible).
+func (m *Model) HandleKey(key string) {
+	total := m.lineCount()
+	avail := m.contentHeight()
+	if avail <= 0 || total <= avail {
+		m.offset = 0
+		return
+	}
+	page := avail - 1 // one row is reserved for the scroll footer
+	if page < 1 {
+		page = 1
+	}
+	switch key {
+	case "j", "down":
+		m.offset++
+	case "k", "up":
+		m.offset--
+	case "pgdown":
+		m.offset += page
+	case "pgup":
+		m.offset -= page
+	case "g", "home":
+		m.offset = 0
+	case "G", "end":
+		m.offset = total // clamped below
+	}
+	if max := total - page; m.offset > max {
+		m.offset = max
+	}
+	if m.offset < 0 {
+		m.offset = 0
+	}
+}
 
 // IsVisible reports whether the overlay is currently shown.
 func (m Model) IsVisible() bool { return m.visible }
@@ -139,9 +192,9 @@ func DefaultBindings() []Group {
 			Bindings: []Binding{
 				{Key: "l", Desc: "toggle dual-pane layout (local ⇄ remote, needs ≥80 cols)"},
 				{Key: "tab", Desc: "switch focus between remote and local panes"},
-				{Key: "c", Desc: "copy focused pane's selected file(s) to the other pane (download / upload)"},
-				{Key: "u", Desc: "local focus: upload selection to the remote pane's bucket/prefix (same as c)"},
-				{Key: "d", Desc: "remote focus: download selection into the local pane's directory (same as c)"},
+				{Key: "c", Desc: "copy focused pane's selection to the other pane (folders sync recursively)"},
+				{Key: "u", Desc: "local focus: upload files/folders to the remote bucket/prefix (same as c)"},
+				{Key: "d", Desc: "remote focus: download files/folders into the local directory (same as c)"},
 				{Key: "D", Desc: "local focus: delete selection (permanent, no trash; directories recursive)"},
 				{Key: "r", Desc: "local focus: rename the highlighted entry (same directory)"},
 				{Key: "B", Desc: "local focus: create a directory in the local pane"},
@@ -169,14 +222,39 @@ func DefaultBindings() []Group {
 	}
 }
 
-// View renders the overlay. When hidden it returns "". When visible it
-// renders a bordered, centered box listing all bindings grouped by
-// category.
-func (m Model) View() string {
-	if !m.visible {
-		return ""
-	}
+var boxStyle = lipgloss.NewStyle().
+	Border(lipgloss.RoundedBorder()).
+	BorderForeground(lipgloss.Color("#3b82f6")).
+	Padding(1, 2)
 
+var dimStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("#aaaaaa"))
+
+// lineCount is how many content lines the overlay renders in total: the
+// title plus, per group, a blank separator, the group name and its
+// bindings. It mirrors renderLines without building the strings.
+func (m Model) lineCount() int {
+	n := 1
+	for _, g := range m.groups {
+		n += 2 + len(g.Bindings)
+	}
+	return n
+}
+
+// contentHeight is how many content lines fit inside the box (terminal
+// height minus the border+padding frame). <= 0 means the size is unknown
+// (render everything, matching the pre-size fallback).
+func (m Model) contentHeight() int {
+	if m.height <= 0 {
+		return 0
+	}
+	return m.height - boxStyle.GetVerticalFrameSize()
+}
+
+// renderLines builds the styled content lines (title, group headers,
+// binding rows), each truncated to the width the box can spend on it so
+// the overlay never overflows a narrow terminal horizontally.
+func (m Model) renderLines() []string {
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("#e39f00ff")).
@@ -190,14 +268,9 @@ func (m Model) View() string {
 	descStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#aaaaaa"))
 
-	var sb strings.Builder
-	sb.WriteString(titleStyle.Render("lazys3 — keybindings"))
-	sb.WriteString("\n")
-
+	lines := []string{titleStyle.Render("lazys3 — keybindings")}
 	for _, g := range m.groups {
-		sb.WriteString("\n")
-		sb.WriteString(groupStyle.Render(g.Name))
-		sb.WriteString("\n")
+		lines = append(lines, "", groupStyle.Render(g.Name))
 		// Compute a uniform key column width within the group so the
 		// descriptions align.
 		keyW := 0
@@ -208,18 +281,70 @@ func (m Model) View() string {
 		}
 		keyW += 2 // gutter
 		for _, b := range g.Bindings {
-			line := keyStyle.Render(padRight(b.Key, keyW)) +
-				descStyle.Render(b.Desc)
-			sb.WriteString(line)
-			sb.WriteString("\n")
+			lines = append(lines,
+				keyStyle.Render(padRight(b.Key, keyW))+descStyle.Render(b.Desc))
 		}
 	}
+	if maxW := m.width - boxStyle.GetHorizontalFrameSize(); m.width > 0 && maxW > 0 {
+		for i, l := range lines {
+			lines[i] = ansi.Truncate(l, maxW, "…")
+		}
+	}
+	return lines
+}
 
-	box := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#3b82f6")).
-		Padding(1, 2).
-		Render(strings.TrimRight(sb.String(), "\n"))
+// View renders the overlay. When hidden it returns "". When visible it
+// renders a bordered, centered box listing the bindings grouped by
+// category. Content taller than the box scrolls: a window of lines is
+// shown with a position footer ("12-24 of 53 ↑↓ · j/k scroll · ?/esc
+// close"); content that fits renders in full, exactly as before. A box
+// too short for a footer row drops the footer so the overlay never
+// exceeds the terminal height.
+func (m Model) View() string {
+	if !m.visible {
+		return ""
+	}
+
+	lines := m.renderLines()
+	if avail := m.contentHeight(); avail > 0 && len(lines) > avail {
+		page := avail - 1 // the footer takes the last row
+		showFooter := true
+		if page < 1 {
+			// Too short for a footer row: spend the whole box on content
+			// so the overlay never exceeds the terminal height.
+			page = avail
+			showFooter = false
+		}
+		offset := m.offset
+		if max := len(lines) - page; offset > max {
+			offset = max
+		}
+		if offset < 0 {
+			offset = 0
+		}
+		end := offset + page
+		if end > len(lines) {
+			end = len(lines)
+		}
+		window := append([]string{}, lines[offset:end]...)
+		if showFooter {
+			footer := fmt.Sprintf("%d-%d of %d", offset+1, end, len(lines))
+			if offset > 0 {
+				footer += " ↑"
+			}
+			if end < len(lines) {
+				footer += " ↓"
+			}
+			footer += " · j/k scroll · ?/esc close"
+			if maxW := m.width - boxStyle.GetHorizontalFrameSize(); m.width > 0 && maxW > 0 {
+				footer = ansi.Truncate(footer, maxW, "…")
+			}
+			window = append(window, dimStyle.Render(footer))
+		}
+		lines = window
+	}
+
+	box := boxStyle.Render(strings.Join(lines, "\n"))
 
 	// Center on the screen over a dimmed full-canvas background so the
 	// overlay visually replaces the underlying layout (matching the

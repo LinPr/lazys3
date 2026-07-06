@@ -158,6 +158,11 @@ type CmdDeps struct {
 	// TransferID is the transfer-panel row the sync updates. The
 	// handler assigns it via transferpanel.NewID before calling NewCmd.
 	TransferID string
+	// Label is the row label echoed on every TransferDoneMsg (and thus
+	// into the persistent history). Empty falls back to
+	// "sync <src> -> <dst>"; the dual-pane dir copies pass their
+	// "dir: ..." row label so the history matches the panel.
+	Label string
 }
 
 // NewCmd returns a tea.Cmd that runs the sync and emits the transfer
@@ -172,6 +177,10 @@ func NewCmd(deps CmdDeps) tea.Cmd {
 	// before the sync goroutine starts still sees an active sync.
 	ps := newProgressState()
 	register(deps.TransferID, ps)
+	label := deps.Label
+	if label == "" {
+		label = labelFor(deps.Src, deps.Dst)
+	}
 	return func() tea.Msg {
 		defer unregister(deps.TransferID)
 		// Re-validate inputs here so the Cmd is self-contained.
@@ -181,7 +190,7 @@ func NewCmd(deps CmdDeps) tea.Cmd {
 				ID:    deps.TransferID,
 				Err:   fmt.Errorf("parse src %q: %w", deps.Src, err),
 				Op:    transferpanel.OpSync,
-				Label: labelFor(deps.Src, deps.Dst),
+				Label: label,
 			}
 		}
 		dst, err := storage.NewStorageURL(deps.Dst)
@@ -190,7 +199,7 @@ func NewCmd(deps CmdDeps) tea.Cmd {
 				ID:    deps.TransferID,
 				Err:   fmt.Errorf("parse dst %q: %w", deps.Dst, err),
 				Op:    transferpanel.OpSync,
-				Label: labelFor(deps.Src, deps.Dst),
+				Label: label,
 			}
 		}
 
@@ -206,7 +215,7 @@ func NewCmd(deps CmdDeps) tea.Cmd {
 					ID:    deps.TransferID,
 					Err:   fmt.Errorf("sync: build storage: %w", err),
 					Op:    transferpanel.OpSync,
-					Label: labelFor(deps.Src, deps.Dst),
+					Label: label,
 				}
 			}
 		}
@@ -215,7 +224,7 @@ func NewCmd(deps CmdDeps) tea.Cmd {
 				ID:    deps.TransferID,
 				Err:   errors.New("sync: storage is nil"),
 				Op:    transferpanel.OpSync,
-				Label: labelFor(deps.Src, deps.Dst),
+				Label: label,
 			}
 		}
 
@@ -234,7 +243,7 @@ func NewCmd(deps CmdDeps) tea.Cmd {
 				ID:    deps.TransferID,
 				Err:   err,
 				Op:    transferpanel.OpSync,
-				Label: labelFor(deps.Src, deps.Dst),
+				Label: label,
 			}
 		}
 		// Attach the summary as the row note; a fast sync can finish
@@ -251,7 +260,7 @@ func NewCmd(deps CmdDeps) tea.Cmd {
 			ID:    deps.TransferID,
 			Err:   firstErr,
 			Op:    transferpanel.OpSync,
-			Label: labelFor(deps.Src, deps.Dst),
+			Label: label,
 			Note:  note,
 		}
 	}

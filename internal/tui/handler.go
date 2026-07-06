@@ -830,14 +830,7 @@ func (m *Model) promptSync(defaultSrc, defaultDst string) tea.Cmd {
 	// callback can build a storage.Storage. We resolve these up front
 	// (rather than inside the callback) because the user could navigate
 	// away while the modal is open.
-	var endpointURL string
-	var pathStyle bool
-	var profile string
-	if p := m.profileList.GetSelectedProfile(); p != nil {
-		endpointURL = p.EndpointURL
-		pathStyle = shouldUsePathStyle(endpointURL)
-		profile = m.selectedProfile
-	}
+	endpointURL, pathStyle, profile := m.syncConnParams()
 
 	// The chained modals are reopened via ShowInputModalMsg rather than by
 	// calling m.modal.Show inside the callbacks: the callbacks run against
@@ -876,18 +869,38 @@ func showInputModalCmd(title, placeholder string, onConfirm func(string) tea.Cmd
 	}
 }
 
-// startSyncCmd dispatches the sync via syncmodal.NewCmd, plus the first
+// syncConnParams resolves the active profile's endpoint/path-style and
+// name for building a storage.Storage inside a sync Cmd. Resolved up front
+// by the prompt flows (never inside a modal callback, which runs against a
+// stale model).
+func (m *Model) syncConnParams() (endpointURL string, pathStyle bool, profile string) {
+	if p := m.profileList.GetSelectedProfile(); p != nil {
+		endpointURL = p.EndpointURL
+		pathStyle = shouldUsePathStyle(endpointURL)
+		profile = m.selectedProfile
+	}
+	return endpointURL, pathStyle, profile
+}
+
+// startSyncCmd dispatches the user-typed sync flow ('s' key) with the
+// default "sync src -> dst" row label.
+func startSyncCmd(src, dst, flagsStr, endpointURL string, pathStyle bool, profile string) tea.Cmd {
+	label := fmt.Sprintf("sync %s -> %s", src, dst)
+	return syncTransferCmd(src, dst, label, syncmodal.ParseFlags(flagsStr), endpointURL, pathStyle, profile)
+}
+
+// syncTransferCmd dispatches one sync via syncmodal.NewCmd, plus the first
 // tea.Every poll tick. The SyncPollMsg handler in tui.go re-arms the ticker
 // while the sync is registered, so per-file progress keeps flowing to the
 // panel. The row carries the sync context's CancelFunc so 'x' aborts it.
+// Besides the 's' flow it backs the dual-pane directory copies, which pass
+// zero Flags (a plain recursive one-way copy) and a "dir: ..." label.
 //
 // The storage.Storage is built lazily inside the sync Cmd (StorageFn):
 // NewStorage resolves credentials and can block on network I/O, so it must
 // not run on the Update goroutine.
-func startSyncCmd(src, dst, flagsStr, endpointURL string, pathStyle bool, profile string) tea.Cmd {
-	flags := syncmodal.ParseFlags(flagsStr)
+func syncTransferCmd(src, dst, label string, flags syncmodal.Flags, endpointURL string, pathStyle bool, profile string) tea.Cmd {
 	id := transferpanel.NewID()
-	label := fmt.Sprintf("sync %s -> %s", src, dst)
 
 	// Use the S3Option that the objectlist flow already uses, so the sync
 	// talks to the same endpoint as the listing.
@@ -916,6 +929,7 @@ func startSyncCmd(src, dst, flagsStr, endpointURL string, pathStyle bool, profil
 		Dst:        dst,
 		Flags:      flags,
 		TransferID: id,
+		Label:      label,
 	})
 
 	poll := tea.Every(200*time.Millisecond, syncmodal.PollCmd(id))

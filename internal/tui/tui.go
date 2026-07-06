@@ -139,12 +139,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(cmds...)
 		}
 		// Help overlay is handled before any list dispatch so '?' works
-		// in every state. When the help is visible, '?' closes it and
-		// every other key is ignored (so the user can read the help
-		// without triggering a file op by accident).
+		// in every state. When the help is visible, '?'/esc closes it,
+		// j/k/pgup/pgdown (and g/G) scroll it, and every other key is
+		// swallowed (so the user can read the help without triggering a
+		// file op by accident).
 		if m.help.IsVisible() {
 			if msg.String() == "?" || msg.String() == "esc" {
 				m.help.Hide()
+			} else {
+				// Fold "shift+g" -> "G" so the jump-to-bottom key works
+				// on every terminal (see keybinding.KeyString).
+				m.help.HandleKey(keybinding.KeyString(msg.String()))
 			}
 			cmds = append(cmds, m.emitStatusUpdate())
 			return m, tea.Batch(cmds...)
@@ -421,6 +426,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					cmds = append(cmds, cmd)
 				}
 			}
+			// A cancelled sync usually transferred part of its files:
+			// refresh the touched listings so they show what landed.
+			if tmsg.Op == transferpanel.OpSync {
+				if cmd := m.refreshAfterOp(tmsg); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+			}
 		case tmsg.Err != nil:
 			cmds = append(cmds, func() tea.Msg {
 				return types.ErrMsg{Err: tmsg.Err}
@@ -429,6 +441,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// the failing entry: refresh the pane anyway.
 			if tmsg.Local {
 				if cmd := m.localList.Refresh(); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+			}
+			// Same for a partially-failed sync (the engine keeps going
+			// past per-file errors, so most files may have transferred).
+			if tmsg.Op == transferpanel.OpSync {
+				if cmd := m.refreshAfterOp(tmsg); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
 			}

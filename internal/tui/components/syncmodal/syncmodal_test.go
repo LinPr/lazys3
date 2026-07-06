@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/LinPr/lazys3/internal/tui/components/transferpanel"
 	"github.com/LinPr/lazys3/internal/tui/types"
 )
 
@@ -88,6 +89,36 @@ func TestProgressStateConcurrent(t *testing.T) {
 	// Each worker touches 10 distinct names.
 	if done, _, _, _ := ps.snapshot(); done != workers*10 {
 		t.Fatalf("filesDone = %d, want %d", done, workers*10)
+	}
+}
+
+// TestNewCmdLabelPlumbing pins that a caller-supplied Label is echoed on
+// the TransferDoneMsg (so the history record matches the panel row) and
+// that an empty Label falls back to "sync <src> -> <dst>". The nil-storage
+// error path terminates NewCmd without any network.
+func TestNewCmdLabelPlumbing(t *testing.T) {
+	msg := NewCmd(CmdDeps{
+		Src:        "/tmp/src",
+		Dst:        "s3://bkt/pre/",
+		TransferID: "label-test-1",
+		Label:      "dir: src/ -> s3://bkt/pre/src/",
+	})()
+	done, ok := msg.(transferpanel.TransferDoneMsg)
+	if !ok || done.Err == nil {
+		t.Fatalf("msg = %+v, want a failed TransferDoneMsg (nil storage)", msg)
+	}
+	if want := "dir: src/ -> s3://bkt/pre/src/"; done.Label != want {
+		t.Fatalf("label = %q, want the caller-supplied %q", done.Label, want)
+	}
+
+	msg = NewCmd(CmdDeps{
+		Src:        "/tmp/src",
+		Dst:        "s3://bkt/pre/",
+		TransferID: "label-test-2",
+	})()
+	done = msg.(transferpanel.TransferDoneMsg)
+	if want := "sync /tmp/src -> s3://bkt/pre/"; done.Label != want {
+		t.Fatalf("label = %q, want the %q fallback", done.Label, want)
 	}
 }
 

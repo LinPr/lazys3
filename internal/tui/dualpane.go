@@ -2,9 +2,11 @@
 // focus between the remote browser and the local-filesystem pane, and the
 // file-op keys act on the FOCUSED pane's selection with the OTHER pane's
 // location as the destination: 'c' copies across (either direction), 'u'
-// uploads from local focus, 'd' downloads from remote focus — all through
-// the existing transfer machinery (downloadCmds / uploadCmds). The local-
-// only ops (D/r/B/y with local focus) live in localops.go.
+// uploads from local focus, 'd' downloads from remote focus. Files go
+// through the existing transfer machinery (downloadCmds / uploadCmds);
+// directories become one recursive sync row each (a one-way sync without
+// --delete through the storage sync engine). The local-only ops (D/r/B/y
+// with local focus) live in localops.go.
 package tui
 
 import (
@@ -18,6 +20,7 @@ import (
 
 	"github.com/LinPr/lazys3/internal/tui/components/locallist"
 	"github.com/LinPr/lazys3/internal/tui/components/objectlist"
+	"github.com/LinPr/lazys3/internal/tui/components/syncmodal"
 	"github.com/LinPr/lazys3/internal/tui/components/transferpanel"
 	"github.com/LinPr/lazys3/internal/tui/keybinding"
 	"github.com/LinPr/lazys3/internal/tui/state"
@@ -161,40 +164,128 @@ func (m *Model) handleDualFileOp(key string) tea.Cmd {
 	}
 }
 
+// dirSync is one directory-level recursive transfer built by the dual-pane
+// copy flows: a one-way sync (no --delete) through the sync engine.
+type dirSync struct {
+	src, dst, label string
+}
+
+// dirSyncCmds turns the specs into sync transfer rows with the full
+// syncmodal wiring (cancellable ctx, 200ms poll loop, files-done note,
+// summary note, history record).
+func dirSyncCmds(specs []dirSync, endpointURL string, pathStyle bool, profile string) []tea.Cmd {
+	cmds := make([]tea.Cmd, 0, len(specs))
+	for _, d := range specs {
+		cmds = append(cmds, syncTransferCmd(d.src, d.dst, d.label, syncmodal.Flags{}, endpointURL, pathStyle, profile))
+	}
+	return cmds
+}
+
+// transferCountPhrase renders "N file(s)", "M folder(s)" or "N file(s) and
+// M folder(s)" for the dual-pane confirm bodies.
+func transferCountPhrase(files, dirs int) string {
+	switch {
+	case dirs == 0:
+		return fmt.Sprintf("%d file(s)", files)
+	case files == 0:
+		return fmt.Sprintf("%d folder(s)", dirs)
+	default:
+		return fmt.Sprintf("%d file(s) and %d folder(s)", files, dirs)
+	}
+}
+
+// localDirSyncs builds the specs for a local→remote directory copy: each
+// directory syncs recursively to s3://bucket/prefix/<name>/. A '?' or '*'
+// anywhere in the destination key would be parsed as a glob wildcard by
+// storage.NewStorageURL (truncating the prefix and uploading to the wrong
+// keys), so those entries are refused and returned in skipped. A symlink
+// to a directory is resolved to its target — the sync engine walks real
+// directories only.
+func localDirSyncs(dirs []locallist.Entry, bucket, prefix string) (specs []dirSync, skipped []string) {
+	p := prefix
+	if p != "" && !strings.HasSuffix(p, "/") {
+		p += "/"
+	}
+	for _, e := range dirs {
+		name := strings.TrimSuffix(e.Name(), "/")
+		if strings.ContainsAny(p+name, "?*") {
+			skipped = append(skipped, name+"/")
+			continue
+		}
+		src := e.Path()
+		if e.IsSymlink() {
+			if resolved, err := filepath.EvalSymlinks(src); err == nil {
+				src = resolved
+			}
+		}
+		dst := fmt.Sprintf("s3://%s/%s%s/", bucket, p, name)
+		specs = append(specs, dirSync{
+			src:   src,
+			dst:   dst,
+			label: fmt.Sprintf("dir: %s/ -> %s", name, dst),
+		})
+	}
+	return specs, skipped
+}
+
+// remoteDirSyncs builds the specs for a remote→local directory copy: each
+// prefix syncs recursively into <localDir>/<name> (the sync engine creates
+// the destination directory). Keys containing '?' or '*' are refused (see
+// localDirSyncs) — the source URL would list a truncated prefix and sync
+// the wrong subtree.
+func remoteDirSyncs(dirs []objectlist.Object, bucket, localDir string) (specs []dirSync, skipped []string) {
+	for _, o := range dirs {
+		name := path.Base(strings.TrimSuffix(o.Name(), "/"))
+		if strings.ContainsAny(o.Name(), "?*") {
+			skipped = append(skipped, name+"/")
+			continue
+		}
+		dst := filepath.Join(localDir, name)
+		specs = append(specs, dirSync{
+			src:   fmt.Sprintf("s3://%s/%s", bucket, o.Name()),
+			dst:   dst,
+			label: fmt.Sprintf("dir: %s/ -> %s", name, dst),
+		})
+	}
+	return specs, skipped
+}
+
+// wildcardSkipNote renders the confirm-body suffix / error text for
+// entries refused by the dir-sync builders.
+func wildcardSkipNote(skipped []string) string {
+	return fmt.Sprintf("%d folder(s) skipped ('?'/'*' in the s3 path is not supported): %s",
+		len(skipped), strings.Join(skipped, ", "))
+}
+
 // promptCopyToLocal ('c' or 'd' with the remote pane focused) confirms and
-// downloads the remote selection (files only; the highlighted item when
-// nothing is marked) into the local pane's current directory. Rows,
-// progress and cancellation are identical to the single-pane 'd' flow.
+// downloads the remote selection (the highlighted item when nothing is
+// marked) into the local pane's current directory. Files go through the
+// single-pane 'd' machinery (one download row each); each directory prefix
+// becomes one recursive sync row (the engine lists the prefix recursively
+// and creates the destination directory itself).
 func (m *Model) promptCopyToLocal() tea.Cmd {
 	if m.state != state.ActiveObjectList {
 		m.statusBar.SetInfo("open a bucket to copy from")
 		return nil
 	}
-	var files []objectlist.Object
-	skipped := 0
+	var files, dirs []objectlist.Object
 	for _, o := range m.objectlist.SelectedObjects() {
 		if o.IsDir() {
-			skipped++
-			continue
+			dirs = append(dirs, o)
+		} else {
+			files = append(files, o)
 		}
-		files = append(files, o)
 	}
-	if len(files) == 0 && skipped == 0 {
+	if len(files) == 0 && len(dirs) == 0 {
 		obj := m.objectlist.GetSelectedObject()
 		if obj == nil {
 			return nil
 		}
 		if obj.IsDir() {
-			skipped++
+			dirs = append(dirs, *obj)
 		} else {
 			files = append(files, *obj)
 		}
-	}
-	if len(files) == 0 {
-		if skipped > 0 {
-			return errCmd(fmt.Errorf("copy: directories are skipped in dual-pane copy (v1)"))
-		}
-		return nil
 	}
 	localDir := m.localList.Dir()
 	if localDir == "" {
@@ -203,55 +294,62 @@ func (m *Model) promptCopyToLocal() tea.Cmd {
 	}
 	opt := m.objectListOptionFromState()
 	bucket := m.selectedBucket
-	body := fmt.Sprintf("Download %d file(s) to %s?", len(files), localDir)
-	if skipped > 0 {
-		body += fmt.Sprintf(" (%d dir(s) skipped)", skipped)
+	// Resolve the dir sync specs and connection params now — the confirm
+	// callback runs against a stale model.
+	syncs, skipped := remoteDirSyncs(dirs, bucket, localDir)
+	if len(files) == 0 && len(syncs) == 0 {
+		return errCmd(fmt.Errorf("copy: %s", wildcardSkipNote(skipped)))
+	}
+	endpointURL, pathStyle, profile := m.syncConnParams()
+	body := fmt.Sprintf("Download %s to %s?", transferCountPhrase(len(files), len(syncs)), localDir)
+	if len(skipped) > 0 {
+		body += " (" + wildcardSkipNote(skipped) + ")"
 	}
 	m.modal.ShowConfirm(
 		"Copy to local",
 		body,
 		func() tea.Cmd {
-			return downloadCmds(opt, bucket, files, func(o objectlist.Object) string {
-				return filepath.Join(localDir, path.Base(o.Name()))
-			})
+			var cmds []tea.Cmd
+			if len(files) > 0 {
+				cmds = append(cmds, downloadCmds(opt, bucket, files, func(o objectlist.Object) string {
+					return filepath.Join(localDir, path.Base(o.Name()))
+				}))
+			}
+			cmds = append(cmds, dirSyncCmds(syncs, endpointURL, pathStyle, profile)...)
+			return tea.Batch(cmds...)
 		},
 	)
 	return nil
 }
 
 // promptCopyToRemote ('c' or 'u' with the local pane focused) confirms and
-// uploads the local selection (files only; the highlighted entry when
-// nothing is marked) to the remote pane's current s3://bucket/prefix.
+// uploads the local selection (the highlighted entry when nothing is
+// marked) to the remote pane's current s3://bucket/prefix. Files go
+// through uploadCmds (one upload row each); each directory becomes one
+// recursive sync row targeting s3://bucket/prefix/<name>/.
 func (m *Model) promptCopyToRemote() tea.Cmd {
 	if m.state != state.ActiveObjectList || m.selectedBucket == "" {
 		m.statusBar.SetInfo("open a bucket in the remote pane first (tab)")
 		return nil
 	}
-	var files []locallist.Entry
-	skipped := 0
+	var files, dirs []locallist.Entry
 	for _, e := range m.localList.SelectedEntries() {
 		if e.IsDir() {
-			skipped++
-			continue
+			dirs = append(dirs, e)
+		} else {
+			files = append(files, e)
 		}
-		files = append(files, e)
 	}
-	if len(files) == 0 && skipped == 0 {
+	if len(files) == 0 && len(dirs) == 0 {
 		e := m.localList.GetSelectedEntry()
 		if e == nil {
 			return nil
 		}
 		if e.IsDir() {
-			skipped++
+			dirs = append(dirs, *e)
 		} else {
 			files = append(files, *e)
 		}
-	}
-	if len(files) == 0 {
-		if skipped > 0 {
-			return errCmd(fmt.Errorf("copy: directories are skipped in dual-pane copy (v1)"))
-		}
-		return nil
 	}
 	paths := make([]string, 0, len(files))
 	for _, e := range files {
@@ -260,15 +358,27 @@ func (m *Model) promptCopyToRemote() tea.Cmd {
 	opt := m.objectListOptionFromState()
 	bucket := m.selectedBucket
 	prefix := strings.TrimPrefix(m.selectedObject, "/")
-	body := fmt.Sprintf("Upload %d file(s) to s3://%s/%s?", len(paths), bucket, prefix)
-	if skipped > 0 {
-		body += fmt.Sprintf(" (%d dir(s) skipped)", skipped)
+	// Resolve the dir sync specs and connection params now — the confirm
+	// callback runs against a stale model.
+	syncs, skipped := localDirSyncs(dirs, bucket, prefix)
+	if len(paths) == 0 && len(syncs) == 0 {
+		return errCmd(fmt.Errorf("copy: %s", wildcardSkipNote(skipped)))
+	}
+	endpointURL, pathStyle, profile := m.syncConnParams()
+	body := fmt.Sprintf("Upload %s to s3://%s/%s?", transferCountPhrase(len(paths), len(syncs)), bucket, prefix)
+	if len(skipped) > 0 {
+		body += " (" + wildcardSkipNote(skipped) + ")"
 	}
 	m.modal.ShowConfirm(
 		"Copy to remote",
 		body,
 		func() tea.Cmd {
-			return uploadCmds(opt, bucket, prefix, paths)
+			var cmds []tea.Cmd
+			if len(paths) > 0 {
+				cmds = append(cmds, uploadCmds(opt, bucket, prefix, paths))
+			}
+			cmds = append(cmds, dirSyncCmds(syncs, endpointURL, pathStyle, profile)...)
+			return tea.Batch(cmds...)
 		},
 	)
 	return nil

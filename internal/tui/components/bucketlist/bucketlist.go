@@ -23,6 +23,7 @@ type Model struct {
 	// Outer dimensions (including the border frame) from SetSize.
 	width   int
 	height  int
+	focused bool
 	loading bool
 }
 
@@ -47,6 +48,7 @@ func NewModel() Model {
 		key.WithKeys("pgdown"), key.WithHelp("pgdn", "next page"))
 	return Model{
 		bucketlist: bucketlist,
+		focused:    true,
 	}
 }
 
@@ -81,11 +83,24 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 // lipgloss v2's Width/Height include the border frame, so the style gets
 // the outer dimensions while the wrapped list was sized to the inner ones.
 func (m Model) View() string {
+	border := style.FocusedBorderColor
+	if !m.focused {
+		border = style.UnfocusedBorderColor
+	}
 	return style.BucketListStyle.
+		BorderForeground(border).
 		Width(m.width).
 		Height(m.height).
 		Render(m.bucketlist.View())
 }
+
+// SetFocused marks the pane as owning list-navigation keys (dual-pane
+// mode); View picks the border color from it. Constructors default to
+// focused so single-pane rendering is unchanged.
+func (m *Model) SetFocused(v bool) { m.focused = v }
+
+// Focused reports whether the pane is focused.
+func (m Model) Focused() bool { return m.focused }
 
 // SetLoading marks a fetch as in flight. While loading, the empty state
 // renders "No items (loading…)" instead of "No items" so an in-flight
@@ -133,11 +148,18 @@ func (m *Model) GetSelectedBucket() *Bucket {
 
 // SetSize sets the component's outer dimensions. The wrapped list gets the
 // inner size (outer minus the border frame) so rows never overflow the box.
+// The title is re-fit to the new width so it never wraps at narrow widths.
 func (m *Model) SetSize(width, height int) {
 	m.width = width
 	m.height = height
 	fh, fv := style.BucketListStyle.GetFrameSize()
 	m.bucketlist.SetSize(max(width-fh, 0), max(height-fv, 0))
+	// bubbles sizes its help to the full list width but renders it inside
+	// HelpStyle's 2-col left padding, so a footer of exactly that width
+	// wraps onto a second line at narrow pane widths. Shrink the help
+	// budget by the style's frame so the footer truncates ("…") instead.
+	m.bucketlist.Help.Width = max(m.bucketlist.Width()-m.bucketlist.Styles.HelpStyle.GetHorizontalFrameSize(), 0)
+	m.bucketlist.Title = style.FitListTitle(BucketListTitle, m.bucketlist.Width())
 }
 
 // GetSize returns the outer dimensions from SetSize.

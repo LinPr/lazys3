@@ -20,8 +20,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss/v2"
-	"github.com/charmbracelet/x/ansi"
 
+	"github.com/LinPr/lazys3/internal/tui/components/style"
 	"github.com/LinPr/lazys3/internal/tui/types"
 )
 
@@ -224,29 +224,8 @@ func profileLabel(p string) string {
 }
 
 // truncateMiddle shortens s to fit within width cells, keeping the head and
-// tail and replacing the middle with "…" when truncation is needed. When
-// width is large enough the original string is returned unchanged.
+// tail and replacing the middle with "…" when truncation is needed. It is
+// shared with the list titles as style.TruncateMiddle.
 func truncateMiddle(s string, width int) string {
-	if width <= 0 {
-		return ""
-	}
-	w := lipgloss.Width(s)
-	if w <= width {
-		return s
-	}
-	if width <= 1 {
-		return "…"
-	}
-	keep := width - 1
-	head := keep / 2
-	tail := keep - head
-	// TruncateLeft keeps a wide grapheme straddling the cut, which can
-	// overshoot the tail budget; advance the cut until the tail fits.
-	cut := w - tail
-	right := ansi.TruncateLeft(s, cut, "")
-	for lipgloss.Width(right) > tail && cut < w {
-		cut++
-		right = ansi.TruncateLeft(s, cut, "")
-	}
-	return ansi.Truncate(s, head, "") + "…" + right
+	return style.TruncateMiddle(s, width)
 }

@@ -45,6 +45,7 @@ type Model struct {
 	// Outer dimensions (including the border frame) from SetSize.
 	width   int
 	height  int
+	focused bool
 	loading bool
 
 	// Per-prefix cursor memo (see RememberPosition/RestorePosition).
@@ -75,6 +76,7 @@ func NewModel() Model {
 	m := Model{
 		objectlist: objectlist,
 		selected:   selected,
+		focused:    true,
 		posMemo:    make(map[string]int),
 	}
 	m.refreshTitle()
@@ -127,11 +129,24 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 // lipgloss v2's Width/Height include the border frame, so the style gets
 // the outer dimensions while the wrapped list was sized to the inner ones.
 func (m Model) View() string {
+	border := style.FocusedBorderColor
+	if !m.focused {
+		border = style.UnfocusedBorderColor
+	}
 	return style.ObjectListStyle.
+		BorderForeground(border).
 		Width(m.width).
 		Height(m.height).
 		Render(m.objectlist.View())
 }
+
+// SetFocused marks the pane as owning list-navigation keys (dual-pane
+// mode); View picks the border color from it. Constructors default to
+// focused so single-pane rendering is unchanged.
+func (m *Model) SetFocused(v bool) { m.focused = v }
+
+// Focused reports whether the pane is focused.
+func (m Model) Focused() bool { return m.focused }
 
 // SetLoading marks a fetch as in flight. While loading, the empty state
 // renders "No items (loading…)" instead of "No items" so an in-flight
@@ -156,7 +171,10 @@ func (m *Model) SetTitle(title string) {
 }
 
 // refreshTitle recomposes the visible title from the base title, the
-// active sort mode and the selection count.
+// active sort mode and the selection count. The result is middle-truncated
+// to the list's inner width so the title bar never word-wraps onto a
+// second line (which would push every row down and misalign the panes in
+// dual-pane mode).
 func (m *Model) refreshTitle() {
 	base := m.baseTitle
 	if base == "" {
@@ -166,7 +184,7 @@ func (m *Model) refreshTitle() {
 	if n := len(m.selected); n > 0 {
 		title = fmt.Sprintf("%s  %d selected", title, n)
 	}
-	m.objectlist.Title = title
+	m.objectlist.Title = style.FitListTitle(title, m.objectlist.Width())
 }
 
 // SetObjects replaces the listing. This means the content changed (new
@@ -212,11 +230,18 @@ func (m *Model) GetSelectedObject() *Object {
 
 // SetSize sets the component's outer dimensions. The wrapped list gets the
 // inner size (outer minus the border frame) so rows never overflow the box.
+// The title is re-fit to the new width (it is truncated to fit one line).
 func (m *Model) SetSize(width, height int) {
 	m.width = width
 	m.height = height
 	fh, fv := style.ObjectListStyle.GetFrameSize()
 	m.objectlist.SetSize(max(width-fh, 0), max(height-fv, 0))
+	// bubbles sizes its help to the full list width but renders it inside
+	// HelpStyle's 2-col left padding, so a footer of exactly that width
+	// wraps onto a second line at narrow pane widths. Shrink the help
+	// budget by the style's frame so the footer truncates ("…") instead.
+	m.objectlist.Help.Width = max(m.objectlist.Width()-m.objectlist.Styles.HelpStyle.GetHorizontalFrameSize(), 0)
+	m.refreshTitle()
 }
 
 // GetSize returns the outer dimensions from SetSize.
@@ -325,6 +350,19 @@ func (m *Model) ToggleSelected() {
 		delete(m.selected, obj.Name())
 	}
 	m.refreshTitle()
+}
+
+// VisibleObjects returns the objects currently visible in the list —
+// i.e. after any filter narrowing — in display order.
+func (m Model) VisibleObjects() []Object {
+	items := m.objectlist.VisibleItems()
+	out := make([]Object, 0, len(items))
+	for _, it := range items {
+		if o, ok := it.(Object); ok {
+			out = append(out, o)
+		}
+	}
+	return out
 }
 
 // SelectedKeys returns the names of all selected objects in display

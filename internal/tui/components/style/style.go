@@ -6,6 +6,13 @@ import (
 )
 
 var (
+	// FocusedBorderColor is the border color of the pane that owns
+	// list-navigation keys; UnfocusedBorderColor marks the other pane in
+	// dual-pane mode. Single-pane lists stay focused, keeping the
+	// original border color.
+	FocusedBorderColor   = lipgloss.Color("#20e71cff")
+	UnfocusedBorderColor = lipgloss.Color("#555555")
+
 	AppStyle = lipgloss.NewStyle()
 
 	ErrorStyle = lipgloss.NewStyle().
@@ -38,6 +45,10 @@ var (
 		// Background(lipgloss.Color("#000000ff")).
 		Border(lipgloss.NormalBorder()).
 		BorderForeground(lipgloss.Color("#20e71cff"))
+
+	LocalListStyle = lipgloss.NewStyle().
+			Border(lipgloss.NormalBorder()).
+			BorderForeground(FocusedBorderColor)
 
 	PreviewStyle = lipgloss.NewStyle().
 		// Width(30).Height(8).

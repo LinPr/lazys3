@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/v2/list"
 	tea "github.com/charmbracelet/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss/v2"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/LinPr/lazys3/internal/tui/components/bucketlist"
 	"github.com/LinPr/lazys3/internal/tui/components/help"
 	"github.com/LinPr/lazys3/internal/tui/components/historyview"
+	"github.com/LinPr/lazys3/internal/tui/components/locallist"
 	"github.com/LinPr/lazys3/internal/tui/components/modal"
 	"github.com/LinPr/lazys3/internal/tui/components/objectlist"
 	"github.com/LinPr/lazys3/internal/tui/components/preview"
@@ -52,6 +54,13 @@ type Model struct {
 	selectedProfile string
 	selectedBucket  string
 	selectedObject  string
+	// Dual-pane (local ⇄ remote) mode; see dualpane.go. paneFocus is
+	// meaningful only while dualPane and resets to focusRemote on every
+	// toggle. Focus and state are orthogonal: m.state keeps meaning
+	// "which remote list is active".
+	localList locallist.Model
+	dualPane  bool
+	paneFocus paneFocus
 	// lastStatus is the last StatusUpdateMsg emitted. emitStatusUpdate
 	// only publishes when the status actually changed; emitting
 	// unconditionally would make every StatusUpdateMsg pass spawn the
@@ -77,6 +86,7 @@ func NewLazyS3Model() Model {
 		historyView:   historyview.NewModel(),
 		versionView:   versionview.NewModel(),
 		historyStore:  history.NewStore(history.DefaultPath()),
+		localList:     locallist.NewModel(),
 	}
 }
 
@@ -92,6 +102,7 @@ func (m Model) Init() tea.Cmd {
 		m.help.Init(),
 		m.historyView.Init(),
 		m.versionView.Init(),
+		m.localList.Init(),
 	)
 }
 
@@ -183,11 +194,39 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cancelAllOnQuit()
 				return m, tea.Quit
 
+			// w toggles the dual-pane (local ⇄ remote) layout; tab moves
+			// focus between the panes while it is active. Outside dual
+			// mode tab is a handled no-op so it never pages the list.
+			case keybinding.DualPaneToggle:
+				if cmd := m.handleDualPaneToggle(); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+				cmds = append(cmds, m.emitStatusUpdate())
+				return m, tea.Batch(cmds...)
+
+			case keybinding.PaneSwitch:
+				m.handlePaneSwitch()
+				return m, m.emitStatusUpdate()
+
 			case "enter", "right":
+				if m.localFocused() {
+					if cmd := m.localList.Enter(); cmd != nil {
+						cmds = append(cmds, cmd)
+					}
+					cmds = append(cmds, m.emitStatusUpdate())
+					return m, tea.Batch(cmds...)
+				}
 				cmds = append(cmds, m.handleForward(msg), m.emitStatusUpdate())
 				return m, tea.Batch(cmds...)
 
 			case "backspace", "left":
+				if m.localFocused() {
+					if cmd := m.localList.Up(); cmd != nil {
+						cmds = append(cmds, cmd)
+					}
+					cmds = append(cmds, m.emitStatusUpdate())
+					return m, tea.Batch(cmds...)
+				}
 				cmds = append(cmds, m.handleBackward(), m.emitStatusUpdate())
 				return m, tea.Batch(cmds...)
 
@@ -229,6 +268,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// v opens the object-versions overlay for the highlighted file
 			// (object list only; directories error on the status bar).
 			case keybinding.VersionsToggle:
+				if m.localFocused() {
+					m.statusBar.SetInfo(remotePaneKeyHint)
+					return m, m.emitStatusUpdate()
+				}
 				if cmd := m.handleVersionsOpen(); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
@@ -239,6 +282,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// current status is fetched first; the confirm modal opens when
 			// the BucketStatusMsg arrives.
 			case keybinding.VersioningToggle:
+				if m.localFocused() {
+					m.statusBar.SetInfo(remotePaneKeyHint)
+					return m, m.emitStatusUpdate()
+				}
 				if cmd := m.handleVersioningToggle(); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
@@ -253,6 +300,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// toggling, we move the cursor down so the user can mark
 			// several items in a row (the standard mc/nnn UX).
 			case " ", "space":
+				if m.localFocused() {
+					m.localList.ToggleSelected()
+					newLocal, cmd := m.localList.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyDown}))
+					m.localList = newLocal
+					cmds = append(cmds, cmd)
+					if e := m.localList.GetSelectedEntry(); e != nil {
+						if pc := m.previewPanel.SetContent(e); pc != nil {
+							cmds = append(cmds, pc)
+						}
+					}
+					cmds = append(cmds, m.emitStatusUpdate())
+					return m, tea.Batch(cmds...)
+				}
 				if m.state == state.ActiveObjectList {
 					m.objectlist.ToggleSelected()
 					// Synthesise a down-arrow and forward it to the list
@@ -276,6 +336,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// user can recover a partial selection by pressing 'a' again
 			// instead of having to clear first.)
 			case "a":
+				if m.localFocused() {
+					m.localList.InvertSelection()
+					return m, m.emitStatusUpdate()
+				}
 				if m.state == state.ActiveObjectList {
 					m.objectlist.InvertSelection()
 				}
@@ -286,7 +350,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// ActiveBucketList react to these; the handler returns nil for
 			// other states.
 			case "d", "u", "D", "r", "c", "B", "s", keybinding.PresignYank:
-				if cmd := m.handleFileOp(keybinding.KeyString(msg.String())); cmd != nil {
+				// In dual mode, 'c' copies across panes and 's' prefills the
+				// sync flow with both pane locations; local focus turns the
+				// remaining remote-only keys into a status-bar hint.
+				fileOp := m.handleFileOp
+				if m.dualPane {
+					fileOp = m.handleDualFileOp
+				}
+				if cmd := fileOp(keybinding.KeyString(msg.String())); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
 				cmds = append(cmds, m.emitStatusUpdate())
@@ -346,6 +417,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if tmsg.Op == transferpanel.OpDownload {
 				m.objectlist.ClearSelection()
 			}
+			// Mirror for a finished upload: clear the local pane's marks
+			// (harmless in single-pane, where the selection is empty).
+			if tmsg.Op == transferpanel.OpUpload {
+				m.localList.ClearSelection()
+			}
 			// Refresh whichever list the completed op touched.
 			if cmd := m.refreshAfterOp(tmsg); cmd != nil {
 				cmds = append(cmds, cmd)
@@ -385,6 +461,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		newHV, cmd := m.historyView.Update(tmsg)
 		m.historyView = newHV
 		cmds = append(cmds, cmd)
+	case locallist.LoadedMsg:
+		// Local directory fetch results are routed by type (never by
+		// focus): the pane commits the navigation on success and keeps
+		// the previous listing (surfacing an ErrMsg) on failure. When
+		// the local pane is focused, retarget the preview at the newly
+		// loaded directory's highlighted entry.
+		newLocal, cmd := m.localList.Update(tmsg)
+		m.localList = newLocal
+		cmds = append(cmds, cmd)
+		if m.localFocused() {
+			if pc := m.previewCmdForSelection(); pc != nil {
+				cmds = append(cmds, pc)
+			}
+		}
 	case types.SyncPollMsg:
 		// syncmodal.PollCmd snapshots the sync's shared progress state
 		// into the message. Forward it to the panel and re-arm the
@@ -457,13 +547,42 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusBar = newBar
 	}
 
-	// dispatch message to the active component
+	// dispatch message to the active component. Key presses belong to the
+	// focused pane: with the local pane focused they go to the local list
+	// (plus a preview refresh from its highlighted entry) instead of the
+	// remote state switch. Non-key messages keep their existing routes,
+	// with one exception: bubbles' filtering is asynchronous — typing in
+	// the filter input returns a tea.Cmd whose list.FilterMatchesMsg must
+	// be fed back into the SAME list to actually narrow it. That message
+	// belongs to the focused pane (only the focused pane's filter can be
+	// running), so with the local pane focused it must reach the local
+	// list rather than fall through to the remote state switch below —
+	// otherwise the local filter input echoes keys but never narrows.
+	_, isKey := msg.(tea.KeyMsg)
+	_, isFilterMatches := msg.(list.FilterMatchesMsg)
+	if (isKey || isFilterMatches) && m.localFocused() {
+		newLocal, cmd := m.localList.Update(msg)
+		m.localList = newLocal
+		cmds = append(cmds, cmd)
+		if e := m.localList.GetSelectedEntry(); e != nil {
+			if pc := m.previewPanel.SetContent(e); pc != nil {
+				cmds = append(cmds, pc)
+			}
+		}
+		cmds = append(cmds, m.emitStatusUpdate())
+		return m, tea.Batch(cmds...)
+	}
+	// The preview follows the FOCUSED pane's highlight: with the local
+	// pane focused, non-key messages must not re-feed the remote list's
+	// item to the preview (a transfer tick would flip the panel to the
+	// remote item and dispatch its live S3 fetch).
+	feedPreview := !m.localFocused()
 	switch m.state {
 	case state.ActiveProfileList:
 		newProfileListModel, cmd := m.profileList.Update(msg)
 		m.profileList = newProfileListModel
 		profileItem := m.profileList.GetSelectedProfile()
-		if profileItem != nil {
+		if profileItem != nil && feedPreview {
 			if cmd := m.previewPanel.SetContent(profileItem); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
@@ -475,7 +594,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.bucketList = newBucketListModel
 
 		bucketItem := m.bucketList.GetSelectedBucket()
-		if bucketItem != nil {
+		if bucketItem != nil && feedPreview {
 			if cmd := m.previewPanel.SetContent(bucketItem); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
@@ -487,7 +606,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.objectlist = newObjectListModel
 
 		objectItem := m.objectlist.GetSelectedObject()
-		if objectItem != nil {
+		if objectItem != nil && feedPreview {
 			if cmd := m.previewPanel.SetContent(objectItem); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
@@ -521,11 +640,16 @@ func (m *Model) emitStatusUpdate() tea.Cmd {
 	if prefix != "" {
 		prefix = strings.TrimSuffix(prefix, "/")
 	}
+	// The count mirrors the focused pane's selection in dual mode.
+	selected := m.objectlist.SelectedCount()
+	if m.localFocused() {
+		selected = m.localList.SelectedCount()
+	}
 	upd := types.StatusUpdateMsg{
 		Profile:       m.selectedProfile,
 		Bucket:        m.selectedBucket,
 		Prefix:        prefix,
-		SelectedCount: m.objectlist.SelectedCount(),
+		SelectedCount: selected,
 	}
 	if upd == m.lastStatus {
 		return nil
@@ -625,10 +749,14 @@ func (m *Model) cancelAllOnQuit() {
 	}
 }
 
-// filtering reports whether the active list's filter input is focused (the
-// user is typing a filter pattern), in which case global hotkeys must not
-// fire.
+// filtering reports whether the FOCUSED pane's filter input is focused
+// (the user is typing a filter pattern), in which case global hotkeys must
+// not fire. In dual mode with the local pane focused, that is the local
+// list's filter; otherwise the active remote list's.
 func (m Model) filtering() bool {
+	if m.localFocused() {
+		return m.localList.Filtering()
+	}
 	switch m.state {
 	case state.ActiveProfileList:
 		return m.profileList.Filtering()
@@ -644,6 +772,12 @@ func (m Model) filtering() bool {
 // preview panel and returns the live-fetch cmd (nil when nothing is
 // selected or the item is unchanged).
 func (m *Model) previewCmdForSelection() tea.Cmd {
+	if m.localFocused() {
+		if e := m.localList.GetSelectedEntry(); e != nil {
+			return m.previewPanel.SetContent(e)
+		}
+		return nil
+	}
 	switch m.state {
 	case state.ActiveProfileList:
 		if it := m.profileList.GetSelectedProfile(); it != nil {
@@ -661,8 +795,38 @@ func (m *Model) previewCmdForSelection() tea.Cmd {
 	return nil
 }
 
+// remotePaneView renders the active remote list (without the preview);
+// used by the dual-pane composition.
+func (m Model) remotePaneView() string {
+	switch m.state {
+	case state.ActiveProfileList:
+		return m.profileList.View()
+	case state.ActiveBucketList:
+		return m.bucketList.View()
+	case state.ActiveObjectList:
+		return m.objectlist.View()
+	}
+	return style.ErrorStyle.Render("Unknown component")
+}
+
 func (m Model) View() string {
 	var mainContent string
+	if m.dualPane {
+		// Dual layout: remote pane left, local pane right. A visible
+		// preview replaces the UNFOCUSED pane, keeping a stable 2-column
+		// layout with the focused pane's width and cursor intact.
+		left := m.remotePaneView()
+		right := m.localList.View()
+		if m.previewPanel.IsVisible() {
+			if m.paneFocus == focusRemote {
+				right = m.previewPanel.View()
+			} else {
+				left = m.previewPanel.View()
+			}
+		}
+		mainContent = lipgloss.JoinHorizontal(lipgloss.Top, left, right)
+		return m.composeView(mainContent)
+	}
 	switch m.state {
 	case state.ActiveProfileList:
 		mainContent = lipgloss.JoinHorizontal(
@@ -689,6 +853,13 @@ func (m Model) View() string {
 		mainContent = style.ErrorStyle.Render("Unknown component")
 	}
 
+	return m.composeView(mainContent)
+}
+
+// composeView stacks the main content above the transfer panel and the
+// status bar, then applies the overlay precedence. Shared by the single-
+// and dual-pane branches of View.
+func (m Model) composeView(mainContent string) string {
 	// Stack the main content above the transfer panel and the status bar
 	// at the bottom. The transfer panel returns "" when hidden and the
 	// status bar always renders one line, so JoinVertical collapses the

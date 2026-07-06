@@ -79,6 +79,37 @@ func TestUpdateDropsStaleMsgAfterSyncOnlyItem(t *testing.T) {
 	}
 }
 
+// keyedItem is a sync-only item whose FilterValue (base name) collides
+// across instances but whose PreviewKey (path) is unique — the locallist
+// Entry shape.
+type keyedItem struct {
+	name    string
+	key     string
+	content string
+}
+
+func (k keyedItem) FilterValue() string                { return k.name }
+func (k keyedItem) GetPreviewContent() string          { return k.content }
+func (k keyedItem) GetPreviewRequest() *PreviewRequest { return nil }
+func (k keyedItem) PreviewKey() string                 { return k.key }
+
+func TestSyncItemPreviewKeyBeatsFilterValueCollision(t *testing.T) {
+	pm := NewPreviewModel()
+	pm.Show()
+
+	pm.SetContent(keyedItem{name: "README.md", key: "/a/README.md", content: "a-meta"})
+	pm.SetContent(keyedItem{name: "README.md", key: "/b/README.md", content: "b-meta"})
+	if pm.content != "b-meta" {
+		t.Fatalf("content = %q, want b-meta (same-name entry hit the stale memo)", pm.content)
+	}
+
+	// The memo still dedupes an unchanged key.
+	pm.SetContent(keyedItem{name: "README.md", key: "/b/README.md", content: "changed"})
+	if pm.content != "b-meta" {
+		t.Fatalf("content = %q, want b-meta (unchanged key must be a no-op)", pm.content)
+	}
+}
+
 func TestRequestTokenDistinguishesRequests(t *testing.T) {
 	a := requestToken(objectReq("a.txt"))
 	b := requestToken(objectReq("b.txt"))

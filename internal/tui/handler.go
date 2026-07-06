@@ -133,7 +133,7 @@ func (m *Model) handleFileOp(key string) tea.Cmd {
 		case "B":
 			return m.promptMakeBucket()
 		case "s":
-			return m.promptSync()
+			return m.promptSync(m.remoteLocation(), "")
 		}
 	case state.ActiveObjectList:
 		switch key {
@@ -148,7 +148,7 @@ func (m *Model) handleFileOp(key string) tea.Cmd {
 		case "c":
 			return m.promptCopy()
 		case "s":
-			return m.promptSync()
+			return m.promptSync(m.remoteLocation(), "")
 		case keybinding.PresignYank:
 			return m.promptPresign()
 		}
@@ -763,19 +763,20 @@ func (m *Model) promptVersionDelete(msg versionview.ActionMsg) tea.Cmd {
 // the completed op. Downloads/uploads don't need a refresh of the remote
 // list, but deletes/copies/renames/mb/rb/sync do.
 func (m *Model) refreshAfterOp(done transferpanel.TransferDoneMsg) tea.Cmd {
+	var cmds []tea.Cmd
 	switch done.Op {
 	case transferpanel.OpDelete, transferpanel.OpCopy, transferpanel.OpRename,
 		transferpanel.OpUpload:
 		if m.state == state.ActiveObjectList {
 			opt := m.objectListOptionFromState()
 			m.objectlist.SetLoading(true)
-			return objectlist.FetchObjectListCmd(opt)
+			cmds = append(cmds, objectlist.FetchObjectListCmd(opt))
 		}
 	case transferpanel.OpMakeBucket, transferpanel.OpDeleteBucket:
 		if m.state == state.ActiveBucketList {
 			opt := m.bucketListOptionFromState()
 			m.bucketList.SetLoading(true)
-			return bucketlist.FetchBucketListCmd(&opt)
+			cmds = append(cmds, bucketlist.FetchBucketListCmd(&opt))
 		}
 	case transferpanel.OpSync:
 		// A sync may add/delete objects in the currently viewed listing.
@@ -783,14 +784,24 @@ func (m *Model) refreshAfterOp(done transferpanel.TransferDoneMsg) tea.Cmd {
 		case state.ActiveObjectList:
 			opt := m.objectListOptionFromState()
 			m.objectlist.SetLoading(true)
-			return objectlist.FetchObjectListCmd(opt)
+			cmds = append(cmds, objectlist.FetchObjectListCmd(opt))
 		case state.ActiveBucketList:
 			opt := m.bucketListOptionFromState()
 			m.bucketList.SetLoading(true)
-			return bucketlist.FetchBucketListCmd(&opt)
+			cmds = append(cmds, bucketlist.FetchBucketListCmd(&opt))
 		}
 	}
-	return nil
+	// Downloads and syncs may have created files in the local pane's
+	// directory; refresh it (cursor kept) while dual mode is showing it.
+	if m.dualPane && (done.Op == transferpanel.OpDownload || done.Op == transferpanel.OpSync) {
+		if cmd := m.localList.Refresh(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	if len(cmds) == 0 {
+		return nil
+	}
+	return tea.Batch(cmds...)
 }
 
 // promptSync starts the chained-modal sync flow. It prompts for source,
@@ -803,25 +814,13 @@ func (m *Model) refreshAfterOp(done transferpanel.TransferDoneMsg) tea.Cmd {
 // and dispatches the sync via syncmodal.NewCmd + tea.Every for the
 // polling loop.
 //
-// The default source is the current s3://bucket/prefix (so the user can
-// sync the current prefix to a local dir by typing the destination and
-// hitting enter). The default destination is empty (the user must type
-// it). The default flags string is empty (a default size-and-mtime
-// sync).
-func (m *Model) promptSync() tea.Cmd {
-	// Default source: the current s3 URI (bucket + prefix), or "" if
-	// we're at the bucket list level.
-	defaultSrc := ""
-	if m.state == state.ActiveObjectList {
-		if m.selectedBucket != "" {
-			if m.selectedObject != "" {
-				defaultSrc = fmt.Sprintf("s3://%s/%s", m.selectedBucket, m.selectedObject)
-			} else {
-				defaultSrc = fmt.Sprintf("s3://%s", m.selectedBucket)
-			}
-		}
-	}
-
+// The single-pane flow passes the current s3://bucket/prefix as the
+// default source (so the user can sync the current prefix to a local dir
+// by typing the destination and hitting enter) and an empty destination.
+// Dual-pane mode prefills src with the focused pane's location and dst
+// with the other pane's (see promptDualSync); both stay editable. The
+// default flags string is always empty (a default size-and-mtime sync).
+func (m *Model) promptSync(defaultSrc, defaultDst string) tea.Cmd {
 	// Capture the active profile's endpoint/path-style so the final
 	// callback can build a storage.Storage. We resolve these up front
 	// (rather than inside the callback) because the user could navigate
@@ -843,10 +842,10 @@ func (m *Model) promptSync() tea.Cmd {
 		"Sync source (s3://bucket/prefix or local dir)",
 		defaultSrc,
 		func(src string) tea.Cmd {
-			// Default destination: empty for the user to type. A
+			// Destination: empty for the user to type in single-pane (a
 			// local path for s3→local, or s3://bucket/prefix/ for
-			// local→s3 / s3→s3.
-			return showInputModalCmd("Sync destination", "", func(dst string) tea.Cmd {
+			// local→s3 / s3→s3); the other pane's location in dual mode.
+			return showInputModalCmd("Sync destination", defaultDst, func(dst string) tea.Cmd {
 				return showInputModalCmd(
 					"Sync flags (--delete --size-only --dry-run --exclude=*.log)",
 					"",
@@ -928,6 +927,13 @@ func (m *Model) setSize(width, height int) {
 
 func (m *Model) initComponentsSize(msg tea.WindowSizeMsg) {
 	m.setSize(msg.Width, msg.Height)
+
+	// A terminal too narrow for two readable panes drops dual mode
+	// entirely (re-enter with 'w' after widening).
+	if m.dualPane && m.width < minDualPaneWidth {
+		m.exitDualPane()
+		m.statusBar.SetInfo(fmt.Sprintf("dual-pane closed: terminal too narrow (needs ≥%d cols)", minDualPaneWidth))
+	}
 
 	// Lists and the preview panel are sized from the preview panel's
 	// visibility (half width when it is shown). All component sizes are
@@ -1182,6 +1188,24 @@ func (m *Model) resizeLists() {
 	listHeight := m.height - transferPanelHeight - statusBarHeight
 	if listHeight < 4 {
 		listHeight = 4
+	}
+	if m.dualPane {
+		// Dual layout: remote pane left, local pane right. A visible
+		// preview takes the UNFOCUSED pane's exact slot (see View).
+		lw := m.width / 2
+		rw := m.width - lw
+		m.profileList.SetSize(lw, listHeight)
+		m.bucketList.SetSize(lw, listHeight)
+		m.objectlist.SetSize(lw, listHeight)
+		m.localList.SetSize(rw, listHeight)
+		if m.previewPanel.IsVisible() {
+			if m.paneFocus == focusRemote {
+				m.previewPanel.SetSize(rw, listHeight)
+			} else {
+				m.previewPanel.SetSize(lw, listHeight)
+			}
+		}
+		return
 	}
 	w := m.width
 	if m.previewPanel.IsVisible() {

@@ -170,11 +170,21 @@ func (pm *Model) SetContent(item PreviewItem) tea.Cmd {
 // versioning toggle updates the bucket preview's Versioning line).
 func (pm *Model) Invalidate() { pm.lastKey = "" }
 
+// Keyer is an optional interface synchronous-only items implement when
+// their FilterValue is not a unique identity (local entries filter on the
+// base name, which collides across directories).
+type Keyer interface {
+	PreviewKey() string
+}
+
 // previewKey builds the identity key SetContent uses to detect whether the
 // highlighted item changed. Requests reuse the fetch token; synchronous-only
-// items (Profile) fall back to their FilterValue.
+// items use their PreviewKey when provided, falling back to FilterValue.
 func previewKey(item PreviewItem, req *PreviewRequest) string {
 	if req == nil {
+		if k, ok := item.(Keyer); ok {
+			return "sync\x00" + k.PreviewKey()
+		}
 		return "sync\x00" + item.FilterValue()
 	}
 	return requestToken(req)

@@ -464,3 +464,50 @@ func TestRowWidthDirEqualsFile(t *testing.T) {
 		}
 	}
 }
+
+// TestTitleFitsNarrowPane pins the dual-pane title guard: at a 40-col
+// pane with a ~60-char base title, the title must be middle-truncated
+// rather than word-wrapped by lipgloss — no rendered line may exceed the
+// width AND the view must keep exactly SetSize's height (a wrapped title
+// bar adds lines, pushing every row down and misaligning the two panes).
+func TestTitleFitsNarrowPane(t *testing.T) {
+	longBase := "s3://" + strings.Repeat("x", 55) // 60-char base title
+	assertFits := func(t *testing.T, m Model, width, height int) {
+		t.Helper()
+		lines := strings.Split(m.View(), "\n")
+		if len(lines) != height {
+			t.Errorf("view has %d lines, want exactly %d (title bar wrapped?)", len(lines), height)
+		}
+		for i, line := range lines {
+			if w := ansi.StringWidth(line); w > width {
+				t.Errorf("line %d is %d cells wide, exceeds %d:\n%q", i, w, width, ansi.Strip(line))
+			}
+		}
+	}
+
+	m := NewModel()
+	m.SetSize(40, 20)
+	m.SetTitle(longBase)
+	m.SetObjects(sampleObjects())
+	assertFits(t, m, 40, 20)
+	// Middle truncation keeps the head of the URI and the sort suffix.
+	out := ansi.Strip(m.View())
+	if !strings.Contains(out, "s3://") || !strings.Contains(out, "↑]") {
+		t.Errorf("truncated title lost its head or sort suffix:\n%s", out)
+	}
+
+	// A title set wide and then shrunk must be re-fit by SetSize.
+	m2 := NewModel()
+	m2.SetSize(100, 20)
+	m2.SetTitle(longBase)
+	m2.SetObjects(sampleObjects())
+	m2.SetSize(40, 20)
+	assertFits(t, m2, 40, 20)
+
+	// And growing back re-fits from the untruncated base title.
+	m2.SetSize(100, 20)
+	if !strings.Contains(ansi.Strip(m2.View()), longBase) {
+		t.Error("growing the pane did not restore the full title")
+	}
+	assertFits(t, m2, 100, 20)
+}

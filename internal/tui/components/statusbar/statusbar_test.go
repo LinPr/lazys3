@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/lipgloss/v2"
+
+	"github.com/LinPr/lazys3/internal/tui/types"
 )
 
 func TestTruncateMiddle(t *testing.T) {
@@ -58,5 +60,23 @@ func TestViewStaysSingleLineWithCJKPrefix(t *testing.T) {
 	}
 	if !strings.Contains(view, "boom") {
 		t.Errorf("View() dropped the error block: %q", view)
+	}
+}
+
+func TestInfoRendersAndClearsOnStatusUpdate(t *testing.T) {
+	m := NewModel()
+	m.SetSize(120, 1)
+	m.SetInfo("presigned URL copied to clipboard")
+
+	if view := m.View(); !strings.Contains(view, "copied to clipboard") {
+		t.Fatalf("View() dropped the info block: %q", view)
+	}
+
+	m, _ = m.Update(types.StatusUpdateMsg{Profile: "dev"})
+	if m.Info() != "" {
+		t.Fatalf("Info() = %q after StatusUpdateMsg, want cleared", m.Info())
+	}
+	if strings.Contains(m.View(), "copied to clipboard") {
+		t.Fatal("View() still shows the info block after StatusUpdateMsg")
 	}
 }

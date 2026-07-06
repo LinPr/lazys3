@@ -438,7 +438,7 @@ func (s *Storage) planAndRun(
 	ctx context.Context,
 	srcObjects, dstObjects []syncObject,
 	opt SyncOptions,
-	progress SyncProgressFunc,
+	_ SyncProgressFunc, // progress flows through the build*Task closures
 	buildTransferTask func(srcObj, dstObj syncObject) (parallel.Task, transferKind),
 	buildDeleteTask func(dstObj syncObject) (parallel.Task, transferKind),
 ) (*SyncResult, error) {

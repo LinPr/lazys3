@@ -214,7 +214,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// logic stays in one place). Only ActiveObjectList /
 			// ActiveBucketList react to these; the handler returns nil for
 			// other states.
-			case "d", "u", "D", "r", "c", "B", "s":
+			case "d", "u", "D", "r", "c", "B", "s", keybinding.PresignYank:
 				if cmd := m.handleFileOp(keybinding.KeyString(msg.String())); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
@@ -296,6 +296,39 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Chained modal flows (sync src → dst → flags) reopen the next
 		// modal message-style so it lands on the live model.
 		m.modal.Show(tmsg.Title, tmsg.Placeholder, tmsg.OnConfirm)
+	case objectlist.PresignDoneMsg:
+		// Presign is instant (no transfer row): failures land on the
+		// status bar; a success shows the URL in a confirm modal (the
+		// modal hard-wraps long bodies) and copies it to the system
+		// clipboard via OSC52.
+		if tmsg.Err != nil {
+			cmds = append(cmds, func() tea.Msg {
+				return types.ErrMsg{Err: tmsg.Err}
+			})
+			break
+		}
+		cmds = append(cmds, tea.SetClipboard(tmsg.URL))
+		insecure := strings.HasPrefix(tmsg.URL, "http://")
+		// PresignCmd is async (credential resolution can take seconds), so
+		// the result can land while another modal or the help overlay is
+		// open. Never clobber those (a pending confirm or half-typed input
+		// would be silently discarded, and a modal opened behind the help
+		// overlay would swallow keys invisibly): fall back to a status-bar
+		// note — the URL is on the clipboard either way.
+		if m.modal.IsVisible() || m.help.IsVisible() {
+			note := fmt.Sprintf("presigned URL for %s copied to clipboard (valid %s)", path.Base(tmsg.Key), tmsg.Expiry)
+			if insecure {
+				note += " — plain HTTP"
+			}
+			m.statusBar.SetInfo(note)
+			break
+		}
+		body := fmt.Sprintf("s3://%s/%s\nvalid for %s — copied to clipboard\n\n%s",
+			tmsg.Bucket, tmsg.Key, tmsg.Expiry, tmsg.URL)
+		if insecure {
+			body += "\n\nwarning: plain-HTTP endpoint — anyone fetching this link sends the URL (a bearer credential) and receives the object unencrypted"
+		}
+		m.modal.ShowConfirm("Presigned URL", body, nil)
 	}
 
 	// Forward errors and status updates to the status bar. ErrMsg arrives

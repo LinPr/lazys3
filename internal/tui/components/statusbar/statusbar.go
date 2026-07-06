@@ -32,6 +32,7 @@ type Model struct {
 	prefix         string
 	selectedCount  int
 	lastError      string
+	info           string
 	width          int
 	height         int
 	dismissedError string // snapshot of the dismissed error so we don't reshow
@@ -77,6 +78,15 @@ func (m *Model) DismissError() {
 	m.lastError = ""
 }
 
+// SetInfo displays a transient informational note (e.g. "presigned URL
+// copied to clipboard" when the result modal could not be shown). It is
+// cleared by the next StatusUpdateMsg, i.e. the next navigation or
+// selection change.
+func (m *Model) SetInfo(msg string) { m.info = msg }
+
+// Info returns the current informational note.
+func (m Model) Info() string { return m.info }
+
 // SetProfile / SetBucket / SetPrefix / SetSelectedCount are imperative
 // setters used by the TUI to keep the bar in sync with the active state
 // without round-tripping through a message.
@@ -114,6 +124,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.bucket = tmsg.Bucket
 		m.prefix = tmsg.Prefix
 		m.selectedCount = tmsg.SelectedCount
+		m.info = ""
 	case types.ErrMsg:
 		m.SetError(tmsg.Err.Error())
 	}
@@ -122,7 +133,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 // View renders the bar as a single styled line. The layout is:
 //
-//	[profile]  s3://bucket/prefix   [N selected]   [last error]
+//	[profile]  s3://bucket/prefix   [N selected]   [info]   [last error]
 //
 // When width is tight the s3 URI is truncated from the middle; the error
 // is dropped before the URI is dropped. The bar always occupies exactly
@@ -140,6 +151,8 @@ func (m Model) View() string {
 		Foreground(lipgloss.Color("#dddddd"))
 	selStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#3b82f6"))
+	infoStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#22c55e"))
 	errStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#ffffff")).
 		Background(lipgloss.Color("#cc0000")).
@@ -155,6 +168,10 @@ func (m Model) View() string {
 	if m.selectedCount > 0 {
 		selBlock = selStyle.Render(fmt.Sprintf("%d selected", m.selectedCount))
 	}
+	infoBlock := ""
+	if m.info != "" {
+		infoBlock = infoStyle.Render(truncateMiddle(m.info, 60))
+	}
 	errBlock := ""
 	if m.lastError != "" {
 		errBlock = errStyle.Render("err: " + truncateMiddle(m.lastError, 30))
@@ -164,6 +181,10 @@ func (m Model) View() string {
 	used := lipgloss.Width(profileBlock) + lipgloss.Width(sep)
 	used += lipgloss.Width(selBlock)
 	if selBlock != "" {
+		used += lipgloss.Width(sep)
+	}
+	used += lipgloss.Width(infoBlock)
+	if infoBlock != "" {
 		used += lipgloss.Width(sep)
 	}
 	used += lipgloss.Width(errBlock)
@@ -179,6 +200,9 @@ func (m Model) View() string {
 	parts := []string{profileBlock, uriBlock}
 	if selBlock != "" {
 		parts = append(parts, selBlock)
+	}
+	if infoBlock != "" {
+		parts = append(parts, infoBlock)
 	}
 	if errBlock != "" {
 		parts = append(parts, errBlock)

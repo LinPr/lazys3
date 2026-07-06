@@ -130,6 +130,18 @@ func NewStorage(ctx context.Context, option StorageOption) (*Storage, error) {
 	}, nil
 }
 
+// PresignGetObject returns a presigned HTTP GET URL for the object, valid
+// for the given expiry (zero means 1h, max 7 days).
+func (s *Storage) PresignGetObject(ctx context.Context, bucketName string, objectKey string, expiry time.Duration) (string, error) {
+	return s.remote.PresignGetObject(ctx, bucketName, objectKey, expiry)
+}
+
+// PresignPutObject returns a presigned HTTP PUT URL for uploading the
+// object, valid for the given expiry (zero means 1h, max 7 days).
+func (s *Storage) PresignPutObject(ctx context.Context, bucketName string, objectKey string, expiry time.Duration) (string, error) {
+	return s.remote.PresignPutObject(ctx, bucketName, objectKey, expiry)
+}
+
 func (s *Storage) DownloadFile(ctx context.Context, bucketName string, objectKey string, localFile string) error {
 	return s.DownloadFileWithProgress(ctx, bucketName, objectKey, localFile, nil)
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/LinPr/lazys3/internal/tui/components/objectlist"
 	"github.com/LinPr/lazys3/internal/tui/components/syncmodal"
 	"github.com/LinPr/lazys3/internal/tui/components/transferpanel"
+	"github.com/LinPr/lazys3/internal/tui/keybinding"
 	"github.com/LinPr/lazys3/internal/tui/state"
 	"github.com/LinPr/lazys3/internal/tui/types"
 	tea "github.com/charmbracelet/bubbletea/v2"
@@ -120,6 +121,7 @@ func (m *Model) bucketListOptionFromState() bucketlist.Option {
 //   - c: copy selected object to s3://bucket/key (ActiveObjectList, file)
 //   - B: make bucket (ActiveBucketList)
 //   - s: sync directory (ActiveObjectList / ActiveBucketList)
+//   - y: presigned share URL for selected object (ActiveObjectList, file)
 //   - t: toggle transfer panel visibility (handled in tui.go)
 func (m *Model) handleFileOp(key string) tea.Cmd {
 	switch m.state {
@@ -146,8 +148,37 @@ func (m *Model) handleFileOp(key string) tea.Cmd {
 			return m.promptCopy()
 		case "s":
 			return m.promptSync()
+		case keybinding.PresignYank:
+			return m.promptPresign()
 		}
 	}
+	return nil
+}
+
+// promptPresign opens a modal asking for the presigned-URL expiry, then
+// generates a shareable GET URL for the highlighted object. Directories
+// have no object to sign, so they surface a status-bar error instead. The
+// result arrives as objectlist.PresignDoneMsg (handled in tui.go), which
+// shows the URL in a confirm modal and copies it to the clipboard.
+func (m *Model) promptPresign() tea.Cmd {
+	obj := m.objectlist.GetSelectedObject()
+	if obj == nil {
+		return nil
+	}
+	if obj.IsDir() {
+		return func() tea.Msg {
+			return types.ErrMsg{Err: fmt.Errorf("presign: directories are not supported; select an object file")}
+		}
+	}
+	key := obj.Name()
+	opt := m.objectListOptionFromState()
+	m.modal.Show(
+		fmt.Sprintf("Presign URL expiry for %s (1s..168h)", path.Base(key)),
+		"1h",
+		func(expiryStr string) tea.Cmd {
+			return objectlist.PresignCmd(opt, key, expiryStr)
+		},
+	)
 	return nil
 }
 
@@ -819,7 +850,7 @@ func (m *Model) handleObjectUnSelect() tea.Cmd {
 	return objectlist.FetchObjectListCmd(opt)
 }
 
-func (m *Model) handleForward(msg tea.Msg) tea.Cmd {
+func (m *Model) handleForward(_ tea.Msg) tea.Cmd {
 	var cmds []tea.Cmd
 
 	switch m.state {

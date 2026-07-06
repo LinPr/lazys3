@@ -237,7 +237,7 @@ func parseDst(dstS3Uri string) (bucket, key string, err error) {
 }
 
 // labelForOp builds a human-readable label for a transfer row.
-func labelForOp(opt Option, a, sep, b string) string {
+func labelForOp(_ Option, a, sep, b string) string {
 	if b == "" {
 		return fmt.Sprintf("%s %s", a, sep)
 	}

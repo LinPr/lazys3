@@ -421,3 +421,62 @@ func (s3store *S3Store) HeadObject(ctx context.Context, bucketName string, objec
 		Key:    aws.String(objectKey),
 	})
 }
+
+// Presign expiry bounds. SigV4 rejects X-Amz-Expires above 7 days, and a
+// sub-second expiry is useless, so we validate the range up front instead
+// of letting the request fail server-side.
+const (
+	presignMinExpiry     = time.Second
+	presignMaxExpiry     = 7 * 24 * time.Hour
+	presignDefaultExpiry = time.Hour
+)
+
+// normalizePresignExpiry applies the default for a zero expiry and rejects
+// values outside [presignMinExpiry, presignMaxExpiry].
+func normalizePresignExpiry(expiry time.Duration) (time.Duration, error) {
+	if expiry == 0 {
+		return presignDefaultExpiry, nil
+	}
+	if expiry < presignMinExpiry || expiry > presignMaxExpiry {
+		return 0, fmt.Errorf("presign expiry %v out of range [%v, %v]", expiry, presignMinExpiry, presignMaxExpiry)
+	}
+	return expiry, nil
+}
+
+// PresignGetObject returns a presigned HTTP GET URL for the object, valid
+// for the given expiry (zero means 1h). The URL is signed against the
+// client's configured endpoint and addressing style, so custom endpoints
+// (e.g. Aliyun OSS via endpoint_url + virtual-host addressing) work.
+func (s3store *S3Store) PresignGetObject(ctx context.Context, bucketName string, objectKey string, expiry time.Duration) (string, error) {
+	expiry, err := normalizePresignExpiry(expiry)
+	if err != nil {
+		return "", err
+	}
+	req, err := s3store.presigner.PresignGetObject(ctx, &s3.GetObjectInput{
+		Bucket:       aws.String(bucketName),
+		Key:          aws.String(objectKey),
+		RequestPayer: s3store.requestPayer(),
+	}, s3.WithPresignExpires(expiry))
+	if err != nil {
+		return "", err
+	}
+	return req.URL, nil
+}
+
+// PresignPutObject returns a presigned HTTP PUT URL for uploading the
+// object, valid for the given expiry (zero means 1h).
+func (s3store *S3Store) PresignPutObject(ctx context.Context, bucketName string, objectKey string, expiry time.Duration) (string, error) {
+	expiry, err := normalizePresignExpiry(expiry)
+	if err != nil {
+		return "", err
+	}
+	req, err := s3store.presigner.PresignPutObject(ctx, &s3.PutObjectInput{
+		Bucket:       aws.String(bucketName),
+		Key:          aws.String(objectKey),
+		RequestPayer: s3store.requestPayer(),
+	}, s3.WithPresignExpires(expiry))
+	if err != nil {
+		return "", err
+	}
+	return req.URL, nil
+}

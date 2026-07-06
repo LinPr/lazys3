@@ -112,6 +112,7 @@ func DefaultBindings() []Group {
 				{Key: "c", Desc: "copy selected object to s3://bucket/key"},
 				{Key: "B", Desc: "make bucket (in bucket list)"},
 				{Key: "s", Desc: "sync directory (local ⇄ s3, s3 ⇄ s3)"},
+				{Key: "y", Desc: "generate presigned share URL"},
 			},
 		},
 		{

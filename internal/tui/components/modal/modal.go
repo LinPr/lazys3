@@ -20,6 +20,7 @@ import (
 	"github.com/charmbracelet/bubbles/v2/textinput"
 	tea "github.com/charmbracelet/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // Mode selects the modal interaction style.
@@ -212,7 +213,10 @@ func (m Model) View() string {
 	case ModeInput:
 		content = m.input.View()
 	case ModeConfirm:
-		content = m.body
+		// Hard-wrap so long unbroken strings (e.g. presigned URLs) never
+		// push the box past its width. Budget: box width minus 2 border
+		// columns and 2 padding columns.
+		content = ansi.Hardwrap(m.body, width-4, true)
 	}
 
 	header := lipgloss.NewStyle().

@@ -91,6 +91,68 @@ func keyTokens(t *testing.T, groups []Group) map[string]bool {
 	return tokens
 }
 
+// paneGroups are the two focus-variant groups: a file-op key whose
+// behaviour depends on pane focus may be documented once in EACH of them
+// (and nowhere else). Every other key must appear in exactly one group.
+var paneGroups = map[string]bool{
+	"Remote pane (S3)": true,
+	"Local pane":       true,
+}
+
+// tokenGroups maps each key-column token to the set of group names that
+// document it, using the same tokenization as keyTokens.
+func tokenGroups(groups []Group) map[string]map[string]bool {
+	out := map[string]map[string]bool{}
+	add := func(tok, group string) {
+		if out[tok] == nil {
+			out[tok] = map[string]bool{}
+		}
+		out[tok][group] = true
+	}
+	for _, g := range groups {
+		for _, b := range g.Bindings {
+			if strings.TrimSpace(b.Key) == "/" {
+				add("/", g.Name)
+				continue
+			}
+			for _, part := range strings.FieldsFunc(b.Key, func(r rune) bool {
+				return r == '/' || r == ',' || r == ' '
+			}) {
+				if part != "" {
+					add(part, g.Name)
+				}
+			}
+		}
+	}
+	return out
+}
+
+// TestHelpDocumentsKeysExactlyOnce asserts no key is documented in more
+// than one group — the redundancy the old File Ops / Dual-pane split had.
+// The only allowed exception is a key appearing exactly once in each of
+// the two pane groups (its per-focus variants).
+func TestHelpDocumentsKeysExactlyOnce(t *testing.T) {
+	for tok, groups := range tokenGroups(DefaultBindings()) {
+		if len(groups) == 1 {
+			continue
+		}
+		allPane := len(groups) <= len(paneGroups)
+		for g := range groups {
+			if !paneGroups[g] {
+				allPane = false
+			}
+		}
+		if !allPane {
+			names := make([]string, 0, len(groups))
+			for g := range groups {
+				names = append(names, g)
+			}
+			t.Errorf("key %q is documented in %d groups %v, want exactly one (or one per pane group)",
+				tok, len(groups), names)
+		}
+	}
+}
+
 // TestHelpDocumentsEveryClaimedKey asserts that every key the app claims
 // appears in the help overlay's key column, in at least one of its
 // accepted spellings.

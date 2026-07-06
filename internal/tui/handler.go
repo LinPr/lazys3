@@ -346,71 +346,111 @@ func (m *Model) promptUpload() tea.Cmd {
 
 // promptDelete opens a confirm modal for deleting the selected object(s):
 // the multi-selection in display order, or the single highlighted item.
-// Directory entries (common prefixes) are excluded — DeleteObjects on a
-// bare prefix key would silently leave every child object in place — and
-// the skip is surfaced in the confirm body (or as an error when nothing
-// deletable remains).
+// Files go through the existing bulk DeleteCmd; each directory entry
+// (common prefix) becomes its own transfer row that recursively lists and
+// deletes every key under the prefix (objectlist.DeletePrefixCmd). The
+// confirm body calls out the recursive folder deletes by name so the
+// modal never hides that whole trees are going away.
 func (m *Model) promptDelete() tea.Cmd {
-	var objs []objectlist.Object
-	skippedDirs := 0
+	var files, dirs []objectlist.Object
 	for _, o := range m.objectlist.SelectedObjects() {
 		if o.IsDir() {
-			skippedDirs++
-			continue
+			dirs = append(dirs, o)
+		} else {
+			files = append(files, o)
 		}
-		objs = append(objs, o)
 	}
-	if len(objs) == 0 && skippedDirs == 0 {
+	if len(files) == 0 && len(dirs) == 0 {
 		obj := m.objectlist.GetSelectedObject()
 		if obj == nil {
 			return nil
 		}
 		if obj.IsDir() {
-			skippedDirs++
+			dirs = append(dirs, *obj)
 		} else {
-			objs = append(objs, *obj)
+			files = append(files, *obj)
 		}
 	}
-	if len(objs) == 0 {
-		if skippedDirs > 0 {
-			return func() tea.Msg {
-				return types.ErrMsg{Err: fmt.Errorf("delete: directories are not supported; select object files")}
-			}
-		}
+	if len(files) == 0 && len(dirs) == 0 {
 		return nil
 	}
-	keys := make([]string, 0, len(objs))
-	for _, o := range objs {
+	keys := make([]string, 0, len(files))
+	for _, o := range files {
 		keys = append(keys, o.Name())
+	}
+	prefixes := make([]string, 0, len(dirs))
+	for _, o := range dirs {
+		prefixes = append(prefixes, o.Name())
 	}
 	opt := m.objectListOptionFromState()
 	bucket := m.selectedBucket
-	body := fmt.Sprintf("Delete %d object(s) from %s?", len(keys), bucket)
-	if skippedDirs > 0 {
-		body += fmt.Sprintf(" (%d director(y/ies) skipped)", skippedDirs)
+	var body string
+	switch {
+	case len(prefixes) == 0:
+		body = fmt.Sprintf("Delete %d object(s) from %s?", len(keys), bucket)
+	case len(keys) == 0:
+		body = fmt.Sprintf("Recursively delete %d folder(s) from %s? (permanent)%s",
+			len(prefixes), bucket, folderList(prefixes))
+	default:
+		body = fmt.Sprintf("Delete %d object(s) and recursively delete %d folder(s) from %s? (permanent)%s",
+			len(keys), len(prefixes), bucket, folderList(prefixes))
 	}
 	m.modal.ShowConfirm(
 		"Delete objects",
 		body,
 		func() tea.Cmd {
-			id := transferpanel.NewID()
-			ctx, cancel := context.WithCancel(context.Background())
-			// Sequence (not Batch): the row must exist before the op can
-			// emit its TransferDoneMsg, or a fast-failing op leaves a
-			// permanently-running row.
-			return tea.Sequence(
-				addTransferCmd(transferpanel.Transfer{
-					ID:     id,
-					Op:     transferpanel.OpDelete,
-					Label:  fmt.Sprintf("delete %d object(s) from s3://%s", len(keys), bucket),
-					Status: transferpanel.StatusRunning,
-					Cancel: cancel,
-				}),
-				objectlist.DeleteCmd(ctx, opt, keys, id),
-			)
+			cmds := make([]tea.Cmd, 0, len(prefixes)+1)
+			if len(keys) > 0 {
+				id := transferpanel.NewID()
+				ctx, cancel := context.WithCancel(context.Background())
+				// Sequence (not Batch): the row must exist before the op
+				// can emit its TransferDoneMsg, or a fast-failing op leaves
+				// a permanently-running row.
+				cmds = append(cmds, tea.Sequence(
+					addTransferCmd(transferpanel.Transfer{
+						ID:     id,
+						Op:     transferpanel.OpDelete,
+						Label:  fmt.Sprintf("delete %d object(s) from s3://%s", len(keys), bucket),
+						Status: transferpanel.StatusRunning,
+						Cancel: cancel,
+					}),
+					objectlist.DeleteCmd(ctx, opt, keys, id),
+				))
+			}
+			for _, prefix := range prefixes {
+				id := transferpanel.NewID()
+				ctx, cancel := context.WithCancel(context.Background())
+				cmds = append(cmds, tea.Sequence(
+					addTransferCmd(transferpanel.Transfer{
+						ID:     id,
+						Op:     transferpanel.OpDelete,
+						Label:  fmt.Sprintf("delete dir: s3://%s/%s", bucket, prefix),
+						Status: transferpanel.StatusRunning,
+						Cancel: cancel,
+					}),
+					objectlist.DeletePrefixCmd(ctx, opt, prefix, id),
+				))
+			}
+			return tea.Batch(cmds...)
 		},
 	)
 	return nil
+}
+
+// folderList renders up to three folder names (one per line) for the
+// delete confirm body, then "+K more" for the rest.
+func folderList(prefixes []string) string {
+	shown := prefixes
+	extra := 0
+	if len(shown) > 3 {
+		extra = len(shown) - 3
+		shown = shown[:3]
+	}
+	s := "\n" + strings.Join(shown, "\n")
+	if extra > 0 {
+		s += fmt.Sprintf("\n+%d more", extra)
+	}
+	return s
 }
 
 // promptRename opens a modal asking for the new destination s3:// URI.

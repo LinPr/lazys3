@@ -662,7 +662,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if insecure {
 			body += "\n\nwarning: plain-HTTP endpoint — anyone fetching this link sends the URL (a bearer credential) and receives the object unencrypted"
 		}
-		m.modal.ShowConfirm("Presigned URL", body, nil)
+		m.modal.ShowInfo("Presigned URL", body)
 	}
 
 	// Forward errors and status updates to the status bar. ErrMsg arrives

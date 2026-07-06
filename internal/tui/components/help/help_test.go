@@ -29,7 +29,7 @@ func TestViewFitsWithoutScrolling(t *testing.T) {
 	if !strings.Contains(out, "lazys3 — keybindings") {
 		t.Fatal("view missing the title")
 	}
-	if !strings.Contains(out, "force quit") {
+	if !strings.Contains(out, "close the overlay") {
 		t.Fatal("view missing the last binding (content cut off despite fitting)")
 	}
 	if strings.Contains(out, "j/k scroll") {
@@ -56,7 +56,7 @@ func TestScrollWindowAtSmallHeight(t *testing.T) {
 	if !strings.Contains(out, "lazys3 — keybindings") {
 		t.Fatal("first page missing the title")
 	}
-	if strings.Contains(out, "force quit") {
+	if strings.Contains(out, "close the overlay") {
 		t.Fatal("last binding visible on the first page of a 15-row terminal")
 	}
 	// The full footer carries the position, the continues-below indicator
@@ -68,7 +68,7 @@ func TestScrollWindowAtSmallHeight(t *testing.T) {
 
 	m.HandleKey("G")
 	out = m.View()
-	if !strings.Contains(out, "force quit") {
+	if !strings.Contains(out, "close the overlay") {
 		t.Fatal("G did not scroll the last binding into view")
 	}
 	// Bottom page: only the continues-above indicator.
@@ -126,7 +126,7 @@ func TestTinyTerminalNeverOverflows(t *testing.T) {
 		}
 		// Scrolling still reaches the bottom line.
 		m.HandleKey("G")
-		if !strings.Contains(m.View(), "force quit") {
+		if !strings.Contains(m.View(), "close the overlay") {
 			t.Fatalf("height %d: G did not scroll the last binding into view", h)
 		}
 	}

@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -202,15 +203,25 @@ func (s3store *S3Store) CopyToBucket(ctx context.Context, sourceBucket string, d
 // path and routes OSS through the per-object path which has no such
 // requirement.
 func (s3store *S3Store) DeleteObjects(ctx context.Context, bucketName string, objectKeys []string) error {
+	_, err := s3store.deleteObjectsCounted(ctx, bucketName, objectKeys)
+	return err
+}
+
+// deleteObjectsCounted is DeleteObjects returning how many keys were
+// actually removed. The count can be non-zero even when err != nil: the
+// bulk API deletes some keys and reports errors for others, and the
+// per-object fallback aborts mid-batch — callers that surface a running
+// total (DeletePrefix) must not treat a failed batch as zero deletions.
+func (s3store *S3Store) deleteObjectsCounted(ctx context.Context, bucketName string, objectKeys []string) (int, error) {
 	if s3store.dryRun {
-		return nil
+		return len(objectKeys), nil
 	}
 	var objectIds []types.ObjectIdentifier
 	for _, key := range objectKeys {
 		objectIds = append(objectIds, types.ObjectIdentifier{Key: aws.String(key)})
 	}
 	if len(objectIds) == 0 {
-		return nil
+		return 0, nil
 	}
 	output, err := s3store.client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
 		Bucket: aws.String(bucketName),
@@ -226,26 +237,28 @@ func (s3store *S3Store) DeleteObjects(ctx context.Context, bucketName string, ob
 		var noBucket *types.NoSuchBucket
 		if errors.As(err, &noBucket) {
 			log.Printf("Bucket %s does not exist.\n", bucketName)
-			return noBucket
+			return 0, noBucket
 		}
 		log.Printf("Error deleting objects from bucket %s: %v\n", bucketName, err)
-		return err
+		return 0, err
 	}
 	if len(output.Errors) > 0 {
 		for _, outErr := range output.Errors {
 			log.Printf("%s: %s\n", *outErr.Key, *outErr.Message)
 		}
-		return fmt.Errorf("%s", *output.Errors[0].Message)
+		return len(output.Deleted), fmt.Errorf("%s", *output.Errors[0].Message)
 	}
 	// S3 delete is strongly consistent; no post-delete waiter is needed.
 	log.Printf("Deleted %d objects from bucket %s.\n", len(output.Deleted), bucketName)
-	return nil
+	return len(output.Deleted), nil
 }
 
 // deleteObjectsIndividually deletes each key with a separate DeleteObject
-// call. Used as a fallback when the bulk DeleteObjects API rejects the
-// request (e.g. OSS's MissingArgument on missing Content-MD5).
-func (s3store *S3Store) deleteObjectsIndividually(ctx context.Context, bucketName string, objectKeys []string) error {
+// call, returning how many succeeded before any error. Used as a fallback
+// when the bulk DeleteObjects API rejects the request (e.g. OSS's
+// MissingArgument on missing Content-MD5).
+func (s3store *S3Store) deleteObjectsIndividually(ctx context.Context, bucketName string, objectKeys []string) (int, error) {
+	deleted := 0
 	for _, key := range objectKeys {
 		_, err := s3store.client.DeleteObject(ctx, &s3.DeleteObjectInput{
 			Bucket: aws.String(bucketName),
@@ -255,13 +268,93 @@ func (s3store *S3Store) deleteObjectsIndividually(ctx context.Context, bucketNam
 			var noBucket *types.NoSuchBucket
 			if errors.As(err, &noBucket) {
 				log.Printf("Bucket %s does not exist.\n", bucketName)
-				return noBucket
+				return deleted, noBucket
 			}
-			return fmt.Errorf("delete %q: %w", key, err)
+			return deleted, fmt.Errorf("delete %q: %w", key, err)
 		}
+		deleted++
 		log.Printf("Deleted %s.\n", key)
 	}
-	return nil
+	return deleted, nil
+}
+
+// ListAllObjects returns every key under prefix: a recursive (no-delimiter)
+// paginated listing. A non-empty prefix must end with "/" so listing
+// "docs/" can never match a sibling key like "docs2/x"; an empty prefix
+// lists the whole bucket. ctx is checked between pages, so a cancelled
+// context aborts the walk promptly.
+func (s3store *S3Store) ListAllObjects(ctx context.Context, bucket, prefix string) ([]string, error) {
+	if prefix != "" && !strings.HasSuffix(prefix, "/") {
+		return nil, fmt.Errorf("recursive list: prefix %q must end with \"/\"", prefix)
+	}
+	if s3store.useListObjectsV1 {
+		_, objs, err := s3store.listObjectsV1(ctx, bucket, prefix, "")
+		if err != nil {
+			return nil, err
+		}
+		return objectKeys(nil, objs), nil
+	}
+	paginator := s3.NewListObjectsV2Paginator(s3store.client, &s3.ListObjectsV2Input{
+		Bucket:       aws.String(bucket),
+		Prefix:       aws.String(prefix),
+		MaxKeys:      aws.Int32(1000),
+		RequestPayer: s3store.requestPayer(),
+	})
+	var keys []string
+	for paginator.HasMorePages() {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		page, err := paginator.NextPage(ctx)
+		if err != nil {
+			return nil, err
+		}
+		keys = objectKeys(keys, page.Contents)
+	}
+	return keys, nil
+}
+
+// objectKeys appends the non-nil keys of objs to dst.
+func objectKeys(dst []string, objs []types.Object) []string {
+	for _, o := range objs {
+		if o.Key != nil {
+			dst = append(dst, *o.Key)
+		}
+	}
+	return dst
+}
+
+// deleteBatchSize is the DeleteObjects API's per-request key cap.
+const deleteBatchSize = 1000
+
+// DeletePrefix recursively deletes every object under prefix: a full
+// ListAllObjects walk followed by DeleteObjects batches of up to 1000
+// keys, checking ctx between batches. It returns how many keys were
+// deleted — accurate even when a batch partially fails — and a prefix
+// with no keys is a no-op returning 0. An empty prefix is rejected:
+// unlike a listing, "recursively delete the whole bucket" is never what
+// a directory-row delete means, so the scope guard refuses it.
+func (s3store *S3Store) DeletePrefix(ctx context.Context, bucket, prefix string) (int, error) {
+	if prefix == "" {
+		return 0, fmt.Errorf("recursive delete: empty prefix would delete every object in %s; refusing", bucket)
+	}
+	keys, err := s3store.ListAllObjects(ctx, bucket, prefix)
+	if err != nil {
+		return 0, err
+	}
+	deleted := 0
+	for start := 0; start < len(keys); start += deleteBatchSize {
+		if err := ctx.Err(); err != nil {
+			return deleted, err
+		}
+		end := min(start+deleteBatchSize, len(keys))
+		n, err := s3store.deleteObjectsCounted(ctx, bucket, keys[start:end])
+		deleted += n
+		if err != nil {
+			return deleted, err
+		}
+	}
+	return deleted, nil
 }
 
 func (s3store *S3Store) ListObjectsWithPagination(ctx context.Context, bucket, key string) ([]types.CommonPrefix, []types.Object, error) {

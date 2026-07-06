@@ -21,11 +21,11 @@ func TestHelpShiftGScrollsToBottom(t *testing.T) {
 	if !m.help.IsVisible() {
 		t.Fatal("'?' did not open the help overlay")
 	}
-	if strings.Contains(m.help.View(), "force quit") {
+	if strings.Contains(m.help.View(), "close the overlay") {
 		t.Fatal("last binding already visible on a 15-row terminal (content should overflow)")
 	}
 	m = updateModel(t, m, tea.KeyPressMsg(tea.Key{Code: 'g', Mod: tea.ModShift}))
-	if !strings.Contains(m.help.View(), "force quit") {
+	if !strings.Contains(m.help.View(), "close the overlay") {
 		t.Fatal("shift+g did not scroll the help overlay to the bottom")
 	}
 }

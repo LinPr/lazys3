@@ -130,6 +130,36 @@ func DeleteCmd(ctx context.Context, opt Option, keys []string, transferID string
 	}
 }
 
+// DeletePrefixCmd recursively deletes every object under a directory
+// prefix: a no-delimiter listing (paginated, ctx checked between pages)
+// followed by DeleteObjects batches of up to 1000 keys (ctx checked
+// between batches). The done message carries a final "N object(s)
+// deleted" note for the transfer row — an empty prefix reports
+// "0 object(s) deleted"; per-batch note updates are a later iteration.
+func DeletePrefixCmd(ctx context.Context, opt Option, prefix, transferID string) tea.Cmd {
+	return func() tea.Msg {
+		done := func(n int, err error) tea.Msg {
+			return transferpanel.TransferDoneMsg{
+				ID:    transferID,
+				Err:   err,
+				Op:    transferpanel.OpDelete,
+				Label: labelForOp(opt, prefix, "delete dir", ""),
+				Note:  fmt.Sprintf("%d object(s) deleted", n),
+			}
+		}
+		bucket, _, err := bucketFromOption(opt)
+		if err != nil {
+			return done(0, err)
+		}
+		cli, err := s3store.NewS3Client(ctx, s3OptionFromListOption(opt))
+		if err != nil {
+			return done(0, err)
+		}
+		n, err := cli.DeletePrefix(ctx, bucket, prefix)
+		return done(n, err)
+	}
+}
+
 // CopyCmd copies a single object to a destination bucket/key. The dstS3Uri
 // is parsed with uri.ParseS3Uri. Copying an object onto itself is rejected
 // (the S3 API refuses an in-place copy without a metadata directive).

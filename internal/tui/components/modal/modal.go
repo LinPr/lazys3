@@ -14,13 +14,14 @@
 package modal
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/v2/textinput"
 	tea "github.com/charmbracelet/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/LinPr/lazys3/internal/tui/components/style"
 )
 
 // Mode selects the modal interaction style.
@@ -30,8 +31,11 @@ const (
 	// ModeInput prompts for a free-form text value (e.g. a path or s3
 	// URI). Enter submits; Esc cancels.
 	ModeInput Mode = iota
-	// ModeConfirm renders a body and asks yes/no. 'y' confirms; any other
-	// key (except Esc which also cancels) is ignored.
+	// ModeConfirm renders a body and asks yes/no via two footer buttons.
+	// tab / left / right move the highlight (No is highlighted on open, so
+	// a reflexive enter never runs a destructive op), enter executes the
+	// highlighted button, 'y' always confirms, 'n'/'N' and Esc always
+	// cancel.
 	ModeConfirm
 )
 
@@ -43,12 +47,12 @@ type Model struct {
 	mode        Mode
 	title       string
 	body        string
-	yesLabel    string
-	noLabel     string
 	placeholder string
 	input       textinput.Model
 	onConfirm   func(string) tea.Cmd
 	onCancel    func() tea.Cmd
+	focusYes    bool // ModeConfirm: which footer button enter executes
+	info        bool // ModeConfirm: informational — single [ OK ] button
 	width       int
 	height      int
 }
@@ -60,9 +64,7 @@ func NewModel() Model {
 	ti.Placeholder = ""
 	ti.CharLimit = 0
 	return Model{
-		yesLabel: "y",
-		noLabel:  "N",
-		input:    ti,
+		input: ti,
 	}
 }
 
@@ -77,11 +79,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "esc":
-			m.Hide()
-			if m.onCancel != nil {
-				return m, m.onCancel()
-			}
-			return m, nil
+			return m.cancel()
 		case "enter":
 			if m.mode == ModeInput {
 				val := m.input.Value()
@@ -97,29 +95,32 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				}
 				return m, nil
 			}
-			// ModeConfirm: enter defaults to no.
-			m.Hide()
-			if m.onCancel != nil {
-				return m, m.onCancel()
+			// Info: the single OK button dismisses.
+			if m.info {
+				return m.confirm()
 			}
-			return m, nil
+			// ModeConfirm: enter executes the highlighted button.
+			if m.focusYes {
+				return m.confirm()
+			}
+			return m.cancel()
+		case "tab", "left", "right":
+			// Move the button highlight. In input mode these keys belong
+			// to the textinput (cursor movement) and fall through below.
+			// An info modal has only one button, so there is nothing to
+			// move.
+			if m.mode == ModeConfirm && !m.info {
+				m.focusYes = !m.focusYes
+				return m, nil
+			}
 		case "y":
 			if m.mode == ModeConfirm {
-				cb := m.onConfirm
-				m.Hide()
-				if cb != nil {
-					return m, cb("")
-				}
-				return m, nil
+				return m.confirm()
 			}
 			// In input mode, 'y' is a regular character.
-		case "n":
+		case "n", "N", "shift+n":
 			if m.mode == ModeConfirm {
-				m.Hide()
-				if m.onCancel != nil {
-					return m, m.onCancel()
-				}
-				return m, nil
+				return m.cancel()
 			}
 		}
 	}
@@ -128,6 +129,26 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
 		return m, cmd
+	}
+	return m, nil
+}
+
+// confirm executes the yes path: hide the modal and run onConfirm.
+func (m Model) confirm() (Model, tea.Cmd) {
+	cb := m.onConfirm
+	m.Hide()
+	if cb != nil {
+		return m, cb("")
+	}
+	return m, nil
+}
+
+// cancel executes the no/esc path: hide the modal and run onCancel.
+func (m Model) cancel() (Model, tea.Cmd) {
+	cb := m.onCancel
+	m.Hide()
+	if cb != nil {
+		return m, cb()
 	}
 	return m, nil
 }
@@ -148,11 +169,18 @@ func (m *Model) Show(title, placeholder string, onConfirm func(string) tea.Cmd) 
 }
 
 // ShowConfirm opens a yes/no modal. onConfirm is called with "" on "yes".
+// The button highlight always resets to Yes on open (every confirm call
+// site funnels through here, including ShowConfirmWithCancel): enter is
+// the fast-path confirm, per explicit user preference. The highlight is
+// visible UI — destructive modals still spell out what they will do, and
+// esc/n remain one-key cancels.
 func (m *Model) ShowConfirm(title, body string, onConfirm func() tea.Cmd) {
 	m.visible = true
 	m.mode = ModeConfirm
 	m.title = title
 	m.body = body
+	m.focusYes = true
+	m.info = false
 	m.onConfirm = func(string) tea.Cmd {
 		if onConfirm != nil {
 			return onConfirm()
@@ -160,6 +188,13 @@ func (m *Model) ShowConfirm(title, body string, onConfirm func() tea.Cmd) {
 		return nil
 	}
 	m.onCancel = nil
+}
+
+// ShowInfo opens an informational modal: a body with a single [ OK ]
+// button and no question. enter, esc, 'y' and 'n' all just dismiss it.
+func (m *Model) ShowInfo(title, body string) {
+	m.ShowConfirm(title, body, nil)
+	m.info = true
 }
 
 // ShowConfirmWithCancel is like ShowConfirm but also lets the caller hook
@@ -174,6 +209,7 @@ func (m *Model) Hide() {
 	m.visible = false
 	m.title = ""
 	m.body = ""
+	m.info = false
 	m.onConfirm = nil
 	m.onCancel = nil
 	m.input.Reset()
@@ -209,6 +245,22 @@ func (m Model) boxWidth() int {
 	return w
 }
 
+var (
+	buttonBlurStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#888888"))
+	dimStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("#888888"))
+)
+
+// buttonFocusStyle highlights the confirm button enter would execute; it
+// reuses the shared title chip styling (style.TitleStyle: amber on grey)
+// so the highlight matches the focused look used across the TUI. Built at
+// render time — not package init — so a theme applied later via
+// style.Apply is picked up (statusbar reads TitleStyle the same way). The
+// chip padding is stripped so both button states are the same width and
+// the footer doesn't shift when the highlight moves.
+func buttonFocusStyle() lipgloss.Style {
+	return style.TitleStyle.Bold(true).Padding(0)
+}
+
 // View renders the modal. It is the caller's responsibility (tui.go) to
 // overlay the rendered string on top of the rest of the UI.
 func (m Model) View() string {
@@ -239,13 +291,25 @@ func (m Model) View() string {
 	body := bodyStyle.Render(content)
 
 	hint := ""
-	if m.mode == ModeConfirm {
-		hint = fmt.Sprintf("[%s] confirm  [%s/%s] cancel", m.yesLabel, m.noLabel, "esc")
-	} else {
-		hint = "[enter] confirm  [esc] cancel"
+	switch {
+	case m.mode == ModeConfirm && m.info:
+		// Informational body: a single OK button, no question asked.
+		hint = buttonFocusStyle().Render("[ OK ]") + dimStyle.Render("   enter/esc")
+	case m.mode == ModeConfirm:
+		// Two footer buttons; the highlighted one is what enter executes.
+		yes, no := "[ Yes ]", "[ No ]"
+		if m.focusYes {
+			yes = buttonFocusStyle().Render(yes)
+			no = buttonBlurStyle.Render(no)
+		} else {
+			yes = buttonBlurStyle.Render(yes)
+			no = buttonFocusStyle().Render(no)
+		}
+		hint = yes + "  " + no + dimStyle.Render("   tab/←/→ · y/n · esc")
+	default:
+		hint = dimStyle.Render("[enter] confirm  [esc] cancel")
 	}
 	hintStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#888888")).
 		Padding(0, 1).
 		Render(hint)
 

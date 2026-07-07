@@ -3,7 +3,7 @@ package modal
 import (
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea/v2"
+	tea "charm.land/bubbletea/v2"
 )
 
 func press(t *testing.T, m Model, k tea.Key) (Model, tea.Cmd) {

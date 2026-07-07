@@ -1,6 +1,6 @@
 package types
 
-import tea "github.com/charmbracelet/bubbletea/v2"
+import tea "charm.land/bubbletea/v2"
 
 type TaskFinishedMsg struct {
 	TaskID      string

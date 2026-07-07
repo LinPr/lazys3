@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea/v2"
-	"github.com/charmbracelet/lipgloss/v2"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/LinPr/lazys3/internal/tui/components/objectlist"
 )
@@ -17,11 +17,11 @@ import (
 func TestConfirmModalFloatsOverLayout(t *testing.T) {
 	m := NewLazyS3Model()
 	m = updateModel(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
-	base := m.View()
+	base := m.viewContent()
 	baseLines := strings.Split(base, "\n")
 
 	m.modal.ShowConfirm("Delete object", "delete s3://bkt/dir/file.txt ?", nil)
-	out := m.View()
+	out := m.viewContent()
 	outLines := strings.Split(out, "\n")
 
 	if len(outLines) != len(baseLines) {
@@ -65,7 +65,7 @@ func TestConfirmModalFloatsOverLayout(t *testing.T) {
 	if m.modal.IsVisible() {
 		t.Fatal("modal still visible after y")
 	}
-	if got := m.View(); got != base {
+	if got := m.viewContent(); got != base {
 		t.Fatal("layout after closing the modal differs from the pre-modal layout")
 	}
 }
@@ -77,10 +77,10 @@ func TestInputModalFloatsOverVersionOverlay(t *testing.T) {
 	m := NewLazyS3Model()
 	m = updateModel(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 	_ = m.versionView.Show(objectlist.Option{}, "bkt", "dir/file.txt") // Cmd not executed: no fetch runs
-	overlay := m.View()
+	overlay := m.viewContent()
 
 	m.modal.Show("Download version to", "/tmp/file.txt", nil)
-	out := m.View()
+	out := m.viewContent()
 	outLines := strings.Split(out, "\n")
 	overlayLines := strings.Split(overlay, "\n")
 	if len(outLines) != len(overlayLines) {

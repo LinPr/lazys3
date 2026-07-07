@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/v2/list"
-	tea "github.com/charmbracelet/bubbletea/v2"
-	"github.com/charmbracelet/lipgloss/v2"
+	"charm.land/bubbles/v2/list"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/LinPr/lazys3/internal/config"
 	"github.com/LinPr/lazys3/internal/history"
@@ -88,9 +88,22 @@ func NewLazyS3Model() Model {
 // style package before calling this) plus the resolved AWS shared file
 // paths. The zero Config keeps every default.
 func NewLazyS3ModelWithConfig(cfg config.Config, awsFiles config.AWSFiles) Model {
-	// Work around a bubbletea-beta1 renderer bug under GNU screen / the
-	// Linux console before tea.Program picks its renderer (see renderer.go).
-	ensureCompatRenderer()
+	// The bubbletea-beta1 renderer workaround (renderer.go, removed) is
+	// gone: v2.0.8 dropped the TEA_STANDARD_RENDERER escape hatch, so no
+	// pre-Run env tweak is possible. It forced the standard renderer on
+	// two grounds, both addressed by the ultraviolet backend:
+	//   - REP-less unix terminals (GNU screen, Linux console): ultraviolet
+	//     strips the REP capability for those TERMs itself (ultraviolet
+	//     terminal_renderer.go xtermCaps; pinned by renderer_compat_test.go).
+	//   - all of Windows (conhost's partial VT support, beta1's missing
+	//     resize events): ultraviolet delivers Windows resize via console
+	//     input records (terminal_reader_windows.go WINDOW_BUFFER_SIZE_EVENT
+	//     -> uv.WindowSizeEvent, mapped in bubbletea input.go), renders
+	//     with the empty capability set when TERM is unset (xtermCaps("")
+	//     emits no REP/HPA/CHT/...; conhost's usual state, also pinned by
+	//     renderer_compat_test.go), and disables scroll optimizations on
+	//     Windows entirely (microsoft/terminal#19016). Resize delivery
+	//     under real conhost has not been live-verified on this stack.
 	// The local pane always opens at [local] start_dir when configured
 	// (config.Load only keeps it when the directory exists), otherwise the
 	// lazys3 process's working directory, captured once here
@@ -961,7 +974,21 @@ func (m Model) remotePaneView() string {
 	return style.ErrorStyle.Render("Unknown component")
 }
 
-func (m Model) View() string {
+// View implements tea.Model for bubbletea v2.0.8: the frame string is
+// wrapped in a tea.View, which now also carries the terminal modes that
+// used to be tea.NewProgram options (alt screen, focus reporting, cell-
+// motion mouse) — same behavior as before, new API surface.
+func (m Model) View() tea.View {
+	view := tea.NewView(m.viewContent())
+	view.AltScreen = true
+	view.ReportFocus = true
+	view.MouseMode = tea.MouseModeCellMotion
+	return view
+}
+
+// viewContent renders the whole frame as a styled string (the pre-v2.0.8
+// View body); tests assert against this directly.
+func (m Model) viewContent() string {
 	if m.dualPane {
 		// Dual layout: remote pane left, local pane right.
 		return m.composeView(lipgloss.JoinHorizontal(lipgloss.Top,

@@ -24,10 +24,10 @@ import (
 	"sync"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/LinPr/lazys3/internal/storage"
 	"github.com/LinPr/lazys3/internal/tui/components/transferpanel"
 	"github.com/LinPr/lazys3/internal/tui/types"
-	tea "github.com/charmbracelet/bubbletea/v2"
 )
 
 // Flags is the parsed, typed view of the user's flags string.

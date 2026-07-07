@@ -3,8 +3,8 @@ package style
 import (
 	"testing"
 
+	"charm.land/lipgloss/v2"
 	"github.com/LinPr/lazys3/internal/config"
-	"github.com/charmbracelet/lipgloss/v2"
 )
 
 // saveVars snapshots every var Apply mutates and restores them on cleanup

@@ -7,7 +7,7 @@ package filter
 import (
 	"unicode"
 
-	"github.com/charmbracelet/bubbles/v2/list"
+	"charm.land/bubbles/v2/list"
 )
 
 // Substring is a list.FilterFunc that matches a case-insensitive substring

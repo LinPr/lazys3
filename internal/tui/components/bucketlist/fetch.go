@@ -6,10 +6,10 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 
+	tea "charm.land/bubbletea/v2"
 	s3store "github.com/LinPr/lazys3/internal/storage/s3"
 	"github.com/LinPr/lazys3/internal/storage/uri"
 	"github.com/LinPr/lazys3/internal/tui/components/preview"
-	tea "github.com/charmbracelet/bubbletea/v2"
 )
 
 // Bucket carries a single S3 bucket plus the connection hints (profile,

@@ -5,7 +5,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // nerdFont gates icon rendering. Icons are opt-in ([ui] nerd_font = true)

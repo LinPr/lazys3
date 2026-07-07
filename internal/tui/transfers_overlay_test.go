@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea/v2"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/LinPr/lazys3/internal/tui/components/bucketlist"
 	"github.com/LinPr/lazys3/internal/tui/components/objectlist"
@@ -235,7 +235,7 @@ func TestYankURIOnBucketList(t *testing.T) {
 func TestListsReclaimTransferPanelRows(t *testing.T) {
 	m := NewLazyS3Model()
 	m = updateModel(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
-	if h := strings.Count(m.View(), "\n") + 1; h != 24 {
+	if h := strings.Count(m.viewContent(), "\n") + 1; h != 24 {
 		t.Fatalf("view is %d lines, want 24", h)
 	}
 	// A queued transfer must not re-grow a bottom panel.
@@ -243,10 +243,10 @@ func TestListsReclaimTransferPanelRows(t *testing.T) {
 		ID: "t1", Op: transferpanel.OpDownload, Label: "s3://b/k -> ./k",
 		Status: transferpanel.StatusRunning,
 	}})
-	if h := strings.Count(m.View(), "\n") + 1; h != 24 {
+	if h := strings.Count(m.viewContent(), "\n") + 1; h != 24 {
 		t.Fatalf("view with a transfer is %d lines, want 24", h)
 	}
-	if strings.Contains(m.View(), "Transfers\n") {
+	if strings.Contains(m.viewContent(), "Transfers\n") {
 		t.Fatal("bottom transfer panel rendered in the layout")
 	}
 }

@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/LinPr/lazys3/internal/tui/components/style"
-	tea "github.com/charmbracelet/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 

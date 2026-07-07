@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea/v2"
-	"github.com/charmbracelet/lipgloss/v2"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/LinPr/lazys3/internal/tui/components/locallist"
 	"github.com/LinPr/lazys3/internal/tui/components/objectlist"
@@ -610,7 +610,7 @@ func TestLocalPaneStartsInProcessCwd(t *testing.T) {
 // again after exiting the mode.
 func TestDualPaneViewRendersBothPanes(t *testing.T) {
 	m, _ := dualModel(t, "a.txt")
-	out := m.View()
+	out := m.viewContent()
 	if w := lipgloss.Width(out); w != 100 {
 		t.Fatalf("dual view width = %d, want 100", w)
 	}
@@ -624,7 +624,7 @@ func TestDualPaneViewRendersBothPanes(t *testing.T) {
 	}
 
 	m = updateModel(t, m, keyPress('l'))
-	out = m.View()
+	out = m.viewContent()
 	if strings.Contains(out, "a.txt") {
 		t.Fatal("single-pane view still renders the local pane")
 	}

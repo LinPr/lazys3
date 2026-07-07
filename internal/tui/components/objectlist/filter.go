@@ -1,8 +1,8 @@
 package objectlist
 
 import (
+	"charm.land/bubbles/v2/list"
 	"github.com/LinPr/lazys3/internal/tui/components/filter"
-	"github.com/charmbracelet/bubbles/v2/list"
 )
 
 // substringFilter is the shared case-insensitive substring matcher (see

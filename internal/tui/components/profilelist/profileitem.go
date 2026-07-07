@@ -7,9 +7,9 @@ import (
 	"log"
 	"strings"
 
+	tea "charm.land/bubbletea/v2"
 	appcfg "github.com/LinPr/lazys3/internal/config"
 	"github.com/aws/aws-sdk-go-v2/config"
-	tea "github.com/charmbracelet/bubbletea/v2"
 )
 
 type Profile struct {

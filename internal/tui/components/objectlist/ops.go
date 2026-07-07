@@ -6,7 +6,7 @@ import (
 	"path"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea/v2"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/LinPr/lazys3/internal/storage"
 	fsstore "github.com/LinPr/lazys3/internal/storage/fs"

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea/v2"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/LinPr/lazys3/internal/tui/components/bucketlist"
@@ -126,7 +126,7 @@ func TestContentPreviewLocalFileRendersContent(t *testing.T) {
 			m = updateModel(t, m, msg)
 		}
 	}
-	out := ansi.Strip(m.View())
+	out := ansi.Strip(m.viewContent())
 	if !strings.Contains(out, "LOCAL PREVIEW BODY") {
 		t.Fatalf("overlay does not render the local file content:\n%s", out)
 	}
@@ -180,7 +180,7 @@ func TestStaleContentMsgDroppedAcrossReopen(t *testing.T) {
 			m = updateModel(t, m, msg)
 		}
 	}
-	out := ansi.Strip(m.View())
+	out := ansi.Strip(m.viewContent())
 	if strings.Contains(out, "STALE AAA") {
 		t.Fatalf("stale sample populated the reopened overlay:\n%s", out)
 	}
@@ -189,7 +189,7 @@ func TestStaleContentMsgDroppedAcrossReopen(t *testing.T) {
 			m = updateModel(t, m, msg)
 		}
 	}
-	if out := ansi.Strip(m.View()); !strings.Contains(out, "FRESH BBB") {
+	if out := ansi.Strip(m.viewContent()); !strings.Contains(out, "FRESH BBB") {
 		t.Fatalf("fresh sample not applied:\n%s", out)
 	}
 }
@@ -208,7 +208,7 @@ func TestMetadataOpensInEveryState(t *testing.T) {
 	if !m.metaView.IsVisible() {
 		t.Fatal("'m' did not open the metadata overlay on the profile list")
 	}
-	out := ansi.Strip(m.View())
+	out := ansi.Strip(m.viewContent())
 	if !strings.Contains(out, "oss") || !strings.Contains(out, "https://example.com") {
 		t.Fatalf("profile metadata missing name/endpoint:\n%s", out)
 	}
@@ -256,7 +256,7 @@ func TestMetadataOpensInEveryState(t *testing.T) {
 	for _, msg := range collectMsgs(cmd) {
 		m2 = updateModel(t, m2, msg)
 	}
-	out = ansi.Strip(m2.View())
+	out = ansi.Strip(m2.viewContent())
 	if !strings.Contains(out, filepath.Join(dir, "a.txt")) || !strings.Contains(out, "Permissions:") {
 		t.Fatalf("local metadata missing path/permissions:\n%s", out)
 	}

@@ -7,10 +7,10 @@ import (
 	"log"
 	"os"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/LinPr/lazys3/internal/config"
 	"github.com/LinPr/lazys3/internal/tui"
 	"github.com/LinPr/lazys3/internal/tui/components/style"
-	tea "github.com/charmbracelet/bubbletea/v2"
 	"github.com/spf13/cobra"
 )
 
@@ -109,12 +109,10 @@ func (o *Options) Run() error {
 	awsFiles := config.ResolveAWSFiles(o.AWSConfigPath, o.AWSCredentialsPath)
 
 	model := tui.NewLazyS3ModelWithConfig(cfg, awsFiles)
-	p := tea.NewProgram(
-		model,
-		tea.WithAltScreen(),
-		tea.WithReportFocus(),
-		tea.WithMouseCellMotion(),
-	)
+	// Alt screen, focus reporting and cell-motion mouse moved from
+	// tea.NewProgram options to tea.View fields in bubbletea v2.0.8;
+	// they are set in the model's View (internal/tui/tui.go).
+	p := tea.NewProgram(model)
 	log.Println("Starting program")
 	if _, err := p.Run(); err != nil {
 		return err

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/LinPr/lazys3/internal/storage"
 	fsstore "github.com/LinPr/lazys3/internal/storage/fs"
 	s3store "github.com/LinPr/lazys3/internal/storage/s3"
@@ -20,7 +21,6 @@ import (
 	"github.com/LinPr/lazys3/internal/tui/keybinding"
 	"github.com/LinPr/lazys3/internal/tui/state"
 	"github.com/LinPr/lazys3/internal/tui/types"
-	tea "github.com/charmbracelet/bubbletea/v2"
 )
 
 // shouldUsePathStyle returns true when endpointURL is non-empty, does

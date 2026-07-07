@@ -1,10 +1,10 @@
 package bucketlist
 
 import (
+	"charm.land/bubbles/v2/list"
+	"charm.land/bubbles/v2/textinput"
+	"charm.land/lipgloss/v2"
 	"github.com/LinPr/lazys3/internal/tui/components/style"
-	"github.com/charmbracelet/bubbles/v2/list"
-	"github.com/charmbracelet/bubbles/v2/textinput"
-	"github.com/charmbracelet/lipgloss/v2"
 )
 
 func NewCustomItemStyles(isDark bool) (s list.DefaultItemStyles) {

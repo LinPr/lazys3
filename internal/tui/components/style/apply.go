@@ -3,8 +3,8 @@ package style
 import (
 	"image/color"
 
+	"charm.land/lipgloss/v2"
 	"github.com/LinPr/lazys3/internal/config"
-	"github.com/charmbracelet/lipgloss/v2"
 )
 
 // SelectedItemFg, when non-nil, overrides the highlighted-row foreground

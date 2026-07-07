@@ -5,13 +5,13 @@ import (
 	"os"
 	"path/filepath"
 
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/list"
+	tea "charm.land/bubbletea/v2"
 	"github.com/LinPr/lazys3/internal/tui/components/filter"
 	"github.com/LinPr/lazys3/internal/tui/components/style"
 	"github.com/LinPr/lazys3/internal/tui/keybinding"
 	"github.com/LinPr/lazys3/internal/tui/types"
-	"github.com/charmbracelet/bubbles/v2/key"
-	"github.com/charmbracelet/bubbles/v2/list"
-	tea "github.com/charmbracelet/bubbletea/v2"
 )
 
 // memoCap bounds the per-directory cursor memo; oldest entries are
@@ -165,7 +165,7 @@ func (m *Model) SetSize(width, height int) {
 	// HelpStyle's 2-col left padding, so a footer of exactly that width
 	// wraps onto a second line at narrow pane widths. Shrink the help
 	// budget by the style's frame so the footer truncates ("…") instead.
-	m.list.Help.Width = max(m.list.Width()-m.list.Styles.HelpStyle.GetHorizontalFrameSize(), 0)
+	m.list.Help.SetWidth(max(m.list.Width()-m.list.Styles.HelpStyle.GetHorizontalFrameSize(), 0))
 	m.refreshTitle()
 }
 

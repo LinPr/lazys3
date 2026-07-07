@@ -12,8 +12,8 @@ import (
 	"path/filepath"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/LinPr/lazys3/internal/strutil"
-	tea "github.com/charmbracelet/bubbletea/v2"
 )
 
 // Entry is one directory entry. Directory names carry a trailing "/" in

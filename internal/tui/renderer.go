@@ -2,6 +2,7 @@ package tui
 
 import (
 	"os"
+	"runtime"
 	"strings"
 )
 
@@ -41,11 +42,33 @@ func termLacksREP(term string) bool {
 	return false
 }
 
-// ensureCompatRenderer selects bubbletea's legacy standard renderer when
-// $TERM identifies a terminal that the default cell renderer corrupts
-// (see termLacksREP). The standard renderer repaints whole changed lines
-// and erases to end-of-line — sequences every terminal supports — so it
-// renders correctly (if slightly less efficiently) under GNU screen.
+// needsStandardRenderer reports whether the standard renderer must be
+// forced for the given GOOS and $TERM.
+//
+// Unix: only when $TERM lacks REP (see termLacksREP).
+//
+// Windows: always. PowerShell/conhost usually runs with $TERM unset, so
+// cellbuf v0.0.13 falls back to its vt100-only path (relative cursor
+// moves synthesized from CR/LF/CUU/CUD and tab tricks) — a path the
+// classic console's partial VT emulation garbles in practice, and one
+// upstream kept fixing well past beta1 (the renderer flush/resize fixes
+// in later betas, and ultraviolet's per-terminal capability tables that
+// replaced cellbuf's coarse xterm-like switch). bubbletea v2 also lost
+// Windows resize events entirely (charmbracelet/bubbletea#1601), so the
+// cursed renderer's cell-diff model can drift from the real console size
+// with no correcting WindowSizeMsg. The standard renderer's line-diff +
+// erase-line output is safe under conhost's VT processing and costs
+// nothing user-visible, so Windows gets it unconditionally.
+func needsStandardRenderer(goos, term string) bool {
+	return goos == "windows" || termLacksREP(term)
+}
+
+// ensureCompatRenderer selects bubbletea's legacy standard renderer on
+// terminals the default cell renderer corrupts: REP-less unix terminals
+// and all of Windows (see needsStandardRenderer). The standard renderer
+// repaints whole changed lines and erases to end-of-line — sequences
+// every terminal supports — so it renders correctly (if slightly less
+// efficiently) everywhere.
 //
 // It must run before tea.Program.Run decides on a renderer; calling it
 // from NewLazyS3Model guarantees that. An explicit TEA_STANDARD_RENDERER
@@ -54,7 +77,7 @@ func ensureCompatRenderer() {
 	if _, explicit := os.LookupEnv(teaStandardRendererEnv); explicit {
 		return
 	}
-	if termLacksREP(os.Getenv("TERM")) {
+	if needsStandardRenderer(runtime.GOOS, os.Getenv("TERM")) {
 		os.Setenv(teaStandardRendererEnv, "1") //nolint:errcheck
 	}
 }

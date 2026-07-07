@@ -16,6 +16,14 @@ import (
 
 type Options struct {
 	Debug bool
+	// ConfigPath is the --config value: an explicit lazys3 config file
+	// that replaces the default $XDG_CONFIG_HOME/lazys3/config.yaml.
+	ConfigPath string
+	// AWSConfigPath / AWSCredentialsPath are the --aws-config /
+	// --aws-credentials values; they take precedence over AWS_CONFIG_FILE /
+	// AWS_SHARED_CREDENTIALS_FILE and the ~/.aws defaults.
+	AWSConfigPath      string
+	AWSCredentialsPath string
 }
 
 func NewRootCmd() *cobra.Command {
@@ -28,20 +36,26 @@ func NewRootCmd() *cobra.Command {
 
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := o.Complete(args); err != nil {
+				fmt.Fprintln(os.Stderr, err)
 				os.Exit(1)
 			}
 
 			if err := o.Validate(); err != nil {
+				fmt.Fprintln(os.Stderr, err)
 				os.Exit(1)
 			}
 
 			if err := o.Run(); err != nil {
+				fmt.Fprintln(os.Stderr, err)
 				os.Exit(1)
 			}
 		},
 	}
 
 	cmd.PersistentFlags().BoolVar(&o.Debug, "debug", false, "Enable debug mode")
+	cmd.PersistentFlags().StringVar(&o.ConfigPath, "config", "", "lazys3 config file (default $XDG_CONFIG_HOME/lazys3/config.yaml)")
+	cmd.PersistentFlags().StringVar(&o.AWSConfigPath, "aws-config", "", "AWS shared config file (default $AWS_CONFIG_FILE, then ~/.aws/config)")
+	cmd.PersistentFlags().StringVar(&o.AWSCredentialsPath, "aws-credentials", "", "AWS shared credentials file (default $AWS_SHARED_CREDENTIALS_FILE, then ~/.aws/credentials)")
 
 	return cmd
 }
@@ -50,7 +64,21 @@ func (o *Options) Complete(args []string) error {
 	return nil
 }
 
+// Validate rejects explicitly-flagged files that do not exist. Env-var and
+// default locations are deliberately not checked: a missing ~/.aws/config
+// just yields an empty profile list, exactly as before.
 func (o *Options) Validate() error {
+	for flag, path := range map[string]string{
+		"--aws-config":      o.AWSConfigPath,
+		"--aws-credentials": o.AWSCredentialsPath,
+	} {
+		if path == "" {
+			continue
+		}
+		if _, err := os.Stat(path); err != nil {
+			return fmt.Errorf("%s %s: %w", flag, path, err)
+		}
+	}
 	return nil
 }
 
@@ -60,12 +88,27 @@ func (o *Options) Run() error {
 
 	// The config is loaded once and its theme applied to the shared style
 	// vars BEFORE any component is constructed (delegates copy the styles
-	// at construction time).
-	cfg := config.Load()
+	// at construction time). An explicit --config pointing at a missing,
+	// unreadable or malformed file is a hard error; the default location
+	// falls back to defaults. The warning (legacy config.toml hint) goes
+	// to stderr so it survives the altscreen and is visible after exit —
+	// the standard logger is discarded without --debug.
+	cfg, warn, err := config.Load(o.ConfigPath)
+	if err != nil {
+		return err
+	}
+	if warn != "" {
+		fmt.Fprintln(os.Stderr, warn)
+	}
 	style.Apply(cfg.Theme)
 	style.SetNerdFont(cfg.UI.NerdFont)
 
-	model := tui.NewLazyS3ModelWithConfig(cfg)
+	// Resolve the AWS shared config/credentials paths once (flag > env >
+	// ~/.aws default); the model threads them into the profile picker and
+	// every S3 client.
+	awsFiles := config.ResolveAWSFiles(o.AWSConfigPath, o.AWSCredentialsPath)
+
+	model := tui.NewLazyS3ModelWithConfig(cfg, awsFiles)
 	p := tea.NewProgram(
 		model,
 		tea.WithAltScreen(),

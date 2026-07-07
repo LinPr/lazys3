@@ -168,7 +168,10 @@ func NewS3Client(ctx context.Context, option S3Option) (*S3Store, error) {
 		optFns = append(optFns, config.WithSharedConfigProfile(option.Profile))
 	}
 	if option.CredentialFile != "" {
-		optFns = append(optFns, config.WithSharedConfigFiles([]string{option.CredentialFile}))
+		optFns = append(optFns, config.WithSharedCredentialsFiles([]string{option.CredentialFile}))
+	}
+	if option.ConfigFile != "" {
+		optFns = append(optFns, config.WithSharedConfigFiles([]string{option.ConfigFile}))
 	}
 	if option.MaxRetries > 0 {
 		retryer := newRetryer(option.MaxRetries)

@@ -101,6 +101,41 @@ func TestDualPaneRefusedWhenNarrow(t *testing.T) {
 	}
 }
 
+// TestDualPaneEntersAtUnknownSize is the Windows regression: bubbletea v2
+// delivers the initial WindowSizeMsg asynchronously (and on Windows no
+// resize events at all after startup), so 'l' pressed before any size
+// message sees width 0. Unknown size must not be treated as narrow — the
+// toggle enters and the next WindowSizeMsg lays the panes out (or
+// auto-exits if the terminal really is too narrow).
+func TestDualPaneEntersAtUnknownSize(t *testing.T) {
+	t.Run("wide size keeps dual mode", func(t *testing.T) {
+		m := NewLazyS3Model()
+		if m.width != 0 {
+			t.Fatalf("fresh model width = %d, want 0", m.width)
+		}
+		m = updateModel(t, m, keyPress('l'))
+		if !m.dualPane {
+			t.Fatal("'l' at unknown size (width 0) did not enter dual-pane mode")
+		}
+		m = updateModel(t, m, tea.WindowSizeMsg{Width: 100, Height: 30})
+		if !m.dualPane {
+			t.Fatal("wide WindowSizeMsg dropped dual mode")
+		}
+	})
+
+	t.Run("narrow size auto-exits", func(t *testing.T) {
+		m := NewLazyS3Model()
+		m = updateModel(t, m, keyPress('l'))
+		if !m.dualPane {
+			t.Fatal("'l' at unknown size (width 0) did not enter dual-pane mode")
+		}
+		m = updateModel(t, m, tea.WindowSizeMsg{Width: 79, Height: 30})
+		if m.dualPane {
+			t.Fatal("narrow WindowSizeMsg did not auto-exit dual mode")
+		}
+	})
+}
+
 // TestDualPaneToggleAndAutoExit pins 'l' enter/exit and the auto-exit on a
 // narrow resize while dual mode is active. (Entry focus — local pane — is
 // pinned by TestEnterDualPaneFocusesLocalAtStartDir; dualModel tabs back

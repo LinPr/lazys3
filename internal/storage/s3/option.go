@@ -79,12 +79,19 @@ type S3Option struct {
 	// Status: implemented.
 	NoSuchUploadRetryCount int
 
-	// CredentialFile overrides the shared credentials/config file path the
-	// SDK loads. It is wired through config.WithSharedConfigFiles so the
-	// named file replaces both the default ~/.aws/credentials and
-	// ~/.aws/config sources. Profile (when set) is still honoured via
+	// CredentialFile overrides the shared credentials file path the SDK
+	// loads (config.WithSharedCredentialsFiles), replacing the default
+	// ~/.aws/credentials source. Profile (when set) is still honoured via
 	// config.WithSharedConfigProfile.
 	//
 	// Status: implemented.
 	CredentialFile string
+
+	// ConfigFile overrides the shared config file path the SDK loads
+	// (config.WithSharedConfigFiles), replacing the default ~/.aws/config
+	// source. Resolved at startup with the precedence
+	// --aws-config > AWS_CONFIG_FILE > ~/.aws/config.
+	//
+	// Status: implemented.
+	ConfigFile string
 }

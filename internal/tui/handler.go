@@ -14,7 +14,6 @@ import (
 	s3store "github.com/LinPr/lazys3/internal/storage/s3"
 	"github.com/LinPr/lazys3/internal/tui/components/bucketlist"
 	"github.com/LinPr/lazys3/internal/tui/components/objectlist"
-	"github.com/LinPr/lazys3/internal/tui/components/profilelist"
 	"github.com/LinPr/lazys3/internal/tui/components/syncmodal"
 	"github.com/LinPr/lazys3/internal/tui/components/transferpanel"
 	"github.com/LinPr/lazys3/internal/tui/components/versionview"
@@ -79,11 +78,13 @@ func (m *Model) objectListOptionFromState() objectlist.Option {
 	}
 	s3uri := fmt.Sprintf("s3://%s/%s", m.selectedBucket, m.selectedObject)
 	return objectlist.Option{
-		S3Uri:       s3uri,
-		Profile:     m.selectedProfile,
-		EndpointURL: endpointURL,
-		PathStyle:   pathStyle,
-		Region:      region,
+		S3Uri:          s3uri,
+		Profile:        m.selectedProfile,
+		EndpointURL:    endpointURL,
+		PathStyle:      pathStyle,
+		Region:         region,
+		ConfigFile:     m.awsFiles.ConfigFile,
+		CredentialFile: m.awsFiles.CredentialsFile,
 	}
 }
 
@@ -97,9 +98,11 @@ func (m *Model) bucketListOptionFromState() bucketlist.Option {
 		pathStyle = shouldUsePathStyle(endpointURL)
 	}
 	return bucketlist.Option{
-		Profile:     m.selectedProfile,
-		EndpointURL: endpointURL,
-		PathStyle:   pathStyle,
+		Profile:        m.selectedProfile,
+		EndpointURL:    endpointURL,
+		PathStyle:      pathStyle,
+		ConfigFile:     m.awsFiles.ConfigFile,
+		CredentialFile: m.awsFiles.CredentialsFile,
 	}
 }
 
@@ -526,9 +529,11 @@ func (m *Model) promptCopy() tea.Cmd {
 func (m *Model) promptMakeBucket() tea.Cmd {
 	opt := m.bucketListOptionFromState()
 	listOpt := objectlist.Option{
-		Profile:     opt.Profile,
-		EndpointURL: opt.EndpointURL,
-		PathStyle:   opt.PathStyle,
+		Profile:        opt.Profile,
+		EndpointURL:    opt.EndpointURL,
+		PathStyle:      opt.PathStyle,
+		ConfigFile:     opt.ConfigFile,
+		CredentialFile: opt.CredentialFile,
 	}
 	m.modal.Show(
 		"Make bucket",
@@ -564,9 +569,11 @@ func (m *Model) promptDeleteBucket() tea.Cmd {
 	name := b.Title()
 	opt := m.bucketListOptionFromState()
 	listOpt := objectlist.Option{
-		Profile:     opt.Profile,
-		EndpointURL: opt.EndpointURL,
-		PathStyle:   opt.PathStyle,
+		Profile:        opt.Profile,
+		EndpointURL:    opt.EndpointURL,
+		PathStyle:      opt.PathStyle,
+		ConfigFile:     opt.ConfigFile,
+		CredentialFile: opt.CredentialFile,
 	}
 	body := fmt.Sprintf("Delete empty bucket %s?", name)
 	m.modal.ShowConfirm(
@@ -628,9 +635,11 @@ func (m *Model) handleVersioningToggle() tea.Cmd {
 	}
 	bopt := m.bucketListOptionFromState()
 	opt := objectlist.Option{
-		Profile:     bopt.Profile,
-		EndpointURL: bopt.EndpointURL,
-		PathStyle:   bopt.PathStyle,
+		Profile:        bopt.Profile,
+		EndpointURL:    bopt.EndpointURL,
+		PathStyle:      bopt.PathStyle,
+		ConfigFile:     bopt.ConfigFile,
+		CredentialFile: bopt.CredentialFile,
 	}
 	return versionview.BucketStatusCmd(opt, b.Title())
 }
@@ -902,7 +911,7 @@ func (m *Model) promptSync(defaultSrc, defaultDst string) tea.Cmd {
 	// callback can build a storage.Storage. We resolve these up front
 	// (rather than inside the callback) because the user could navigate
 	// away while the modal is open.
-	endpointURL, pathStyle, profile := m.syncConnParams()
+	conn := m.syncConnParams()
 
 	// The chained modals are reopened via ShowInputModalMsg rather than by
 	// calling m.modal.Show inside the callbacks: the callbacks run against
@@ -920,7 +929,7 @@ func (m *Model) promptSync(defaultSrc, defaultDst string) tea.Cmd {
 					"Sync flags (--delete --size-only --dry-run --exclude=*.log)",
 					"",
 					func(flagsStr string) tea.Cmd {
-						return startSyncCmd(src, dst, flagsStr, endpointURL, pathStyle, profile)
+						return startSyncCmd(src, dst, flagsStr, conn)
 					},
 				)
 			})
@@ -941,24 +950,39 @@ func showInputModalCmd(title, placeholder string, onConfirm func(string) tea.Cmd
 	}
 }
 
+// connParams carries the connection facts a sync Cmd needs to build a
+// storage.Storage: the active profile's endpoint/path-style/name plus the
+// resolved AWS shared file paths.
+type connParams struct {
+	endpointURL    string
+	pathStyle      bool
+	profile        string
+	configFile     string
+	credentialFile string
+}
+
 // syncConnParams resolves the active profile's endpoint/path-style and
 // name for building a storage.Storage inside a sync Cmd. Resolved up front
 // by the prompt flows (never inside a modal callback, which runs against a
 // stale model).
-func (m *Model) syncConnParams() (endpointURL string, pathStyle bool, profile string) {
-	if p := m.profileList.GetSelectedProfile(); p != nil {
-		endpointURL = p.EndpointURL
-		pathStyle = shouldUsePathStyle(endpointURL)
-		profile = m.selectedProfile
+func (m *Model) syncConnParams() connParams {
+	conn := connParams{
+		configFile:     m.awsFiles.ConfigFile,
+		credentialFile: m.awsFiles.CredentialsFile,
 	}
-	return endpointURL, pathStyle, profile
+	if p := m.profileList.GetSelectedProfile(); p != nil {
+		conn.endpointURL = p.EndpointURL
+		conn.pathStyle = shouldUsePathStyle(conn.endpointURL)
+		conn.profile = m.selectedProfile
+	}
+	return conn
 }
 
 // startSyncCmd dispatches the user-typed sync flow ('s' key) with the
 // default "sync src -> dst" row label.
-func startSyncCmd(src, dst, flagsStr, endpointURL string, pathStyle bool, profile string) tea.Cmd {
+func startSyncCmd(src, dst, flagsStr string, conn connParams) tea.Cmd {
 	label := fmt.Sprintf("sync %s -> %s", src, dst)
-	return syncTransferCmd(src, dst, label, syncmodal.ParseFlags(flagsStr), endpointURL, pathStyle, profile)
+	return syncTransferCmd(src, dst, label, syncmodal.ParseFlags(flagsStr), conn)
 }
 
 // syncTransferCmd dispatches one sync via syncmodal.NewCmd, plus the first
@@ -971,15 +995,17 @@ func startSyncCmd(src, dst, flagsStr, endpointURL string, pathStyle bool, profil
 // The storage.Storage is built lazily inside the sync Cmd (StorageFn):
 // NewStorage resolves credentials and can block on network I/O, so it must
 // not run on the Update goroutine.
-func syncTransferCmd(src, dst, label string, flags syncmodal.Flags, endpointURL string, pathStyle bool, profile string) tea.Cmd {
+func syncTransferCmd(src, dst, label string, flags syncmodal.Flags, conn connParams) tea.Cmd {
 	id := transferpanel.NewID()
 
 	// Use the S3Option that the objectlist flow already uses, so the sync
 	// talks to the same endpoint as the listing.
 	s3opt := s3store.S3Option{
-		UsePathStyle: pathStyle,
-		Profile:      profile,
-		Endpoint:     endpointURL,
+		UsePathStyle:   conn.pathStyle,
+		Profile:        conn.profile,
+		Endpoint:       conn.endpointURL,
+		ConfigFile:     conn.configFile,
+		CredentialFile: conn.credentialFile,
 	}
 	storageOpt := storage.NewStorageOption(s3opt, fsstore.LocalOption{})
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1020,8 +1046,9 @@ func (m *Model) initComponentsSize(msg tea.WindowSizeMsg) {
 	m.setSize(msg.Width, msg.Height)
 
 	// A terminal too narrow for two readable panes drops dual mode
-	// entirely (re-enter with 'l' after widening).
-	if m.dualPane && m.width < minDualPaneWidth {
+	// entirely (re-enter with 'l' after widening). Width 0 is an unknown
+	// size, not a narrow one (same semantics as enterDualPane).
+	if m.dualPane && m.width > 0 && m.width < minDualPaneWidth {
 		m.exitDualPane()
 		m.statusBar.SetInfo(fmt.Sprintf("dual-pane closed: terminal too narrow (needs ≥%d cols)", minDualPaneWidth))
 	}
@@ -1057,9 +1084,11 @@ func (m *Model) handleProfileSelect() tea.Cmd {
 		pathStyle := shouldUsePathStyle(endpointURL)
 		// 获取对应的 buckets
 		opt := &bucketlist.Option{
-			Profile:     selectedProfile,
-			EndpointURL: endpointURL,
-			PathStyle:   pathStyle,
+			Profile:        selectedProfile,
+			EndpointURL:    endpointURL,
+			PathStyle:      pathStyle,
+			ConfigFile:     m.awsFiles.ConfigFile,
+			CredentialFile: m.awsFiles.CredentialsFile,
 		}
 		m.bucketList.SetOption(opt)
 		m.bucketList.SetLoading(true)
@@ -1095,10 +1124,12 @@ func (m *Model) handleBucketSelect() tea.Cmd {
 			pathStyle = shouldUsePathStyle(endpointURL)
 		}
 		opt := objectlist.Option{
-			S3Uri:       s3uri,
-			Profile:     m.selectedProfile,
-			EndpointURL: endpointURL,
-			PathStyle:   pathStyle,
+			S3Uri:          s3uri,
+			Profile:        m.selectedProfile,
+			EndpointURL:    endpointURL,
+			PathStyle:      pathStyle,
+			ConfigFile:     m.awsFiles.ConfigFile,
+			CredentialFile: m.awsFiles.CredentialsFile,
 		}
 
 		m.objectlist.SetTitle(s3uri)
@@ -1137,10 +1168,12 @@ func (m *Model) handleObjectSelect() tea.Cmd {
 			pathStyle = shouldUsePathStyle(endpointURL)
 		}
 		opt := objectlist.Option{
-			S3Uri:       s3uri,
-			Profile:     m.selectedProfile,
-			EndpointURL: endpointURL,
-			PathStyle:   pathStyle,
+			S3Uri:          s3uri,
+			Profile:        m.selectedProfile,
+			EndpointURL:    endpointURL,
+			PathStyle:      pathStyle,
+			ConfigFile:     m.awsFiles.ConfigFile,
+			CredentialFile: m.awsFiles.CredentialsFile,
 		}
 
 		m.objectlist.SetTitle(s3uri)
@@ -1340,8 +1373,12 @@ func (m *Model) handleMetadataOpen() tea.Cmd {
 			m.statusBar.SetInfo("nothing selected")
 			return nil
 		}
-		files := append([]string{}, profilelist.DefaultSharedConfigFiles...)
-		files = append(files, profilelist.DefaultSharedCredentialsFiles...)
+		var files []string
+		for _, f := range []string{m.awsFiles.ConfigFile, m.awsFiles.CredentialsFile} {
+			if f != "" {
+				files = append(files, f)
+			}
+		}
 		m.metaView.ShowProfile(p.Title(), p.EndpointURL, p.Region(), files)
 		return nil
 	case state.ActiveBucketList:

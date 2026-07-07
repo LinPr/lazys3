@@ -42,7 +42,7 @@
 
 - 应用内可滚动的帮助浮层（`?`），内容与下方按键表一致
 - 单行状态栏：当前 profile、聚焦面板、选中数量、运行/完成/失败传输统计、最近一条提示或错误
-- 通过 `config.toml` 自定义主题颜色，可选 Nerd Font 文件图标
+- 通过 `config.yaml` 自定义主题颜色，可选 Nerd Font 文件图标
 - 配置文件损坏不会导致崩溃 —— 非法值自动回退到默认值并记录日志
 
 ## 按键说明
@@ -169,32 +169,39 @@ lazys3
 
 ## 配置
 
-lazys3 读取 `$XDG_CONFIG_HOME/lazys3/config.toml`（默认 `~/.config/lazys3/config.toml`）。首次运行会写入一份带注释的模板，方便发现所有配置项。所有键都是可选的；非法值会回退到内置默认值并记录日志。
+lazys3 读取 `$XDG_CONFIG_HOME/lazys3/config.yaml`（默认 `~/.config/lazys3/config.yaml`）。首次运行会写入一份带注释的模板，方便发现所有配置项。所有键都是可选的；非法值会回退到内置默认值并记录日志。
 
-```toml
+```yaml
 # lazys3 configuration.
 # All keys are optional; the commented values show the built-in defaults.
 
-[theme]
-# Colors are hex strings: "#rgb", "#rrggbb" or "#rrggbbaa".
-# focused_border = "#20e71c"    # border of the focused pane
-# unfocused_border = "#555555"  # border of the unfocused pane (dual-pane mode)
-# title_fg = "#e39f00"          # status-bar profile chip foreground
-# title_bg = "#444745"          # status-bar profile chip background
-# status_error_fg = "#ffffff"   # status-bar error text
-# selected_fg = ""              # highlighted list row foreground
+theme:
+  # Colors are hex strings: "#rgb", "#rrggbb" or "#rrggbbaa".
+  # focused_border: "#20e71c"    # border of the focused pane
+  # unfocused_border: "#555555"  # border of the unfocused pane (dual-pane mode)
+  # title_fg: "#e39f00"          # status-bar profile chip foreground
+  # title_bg: "#444745"          # status-bar profile chip background
+  # status_error_fg: "#ffffff"   # status-bar error text
+  # selected_fg: ""              # highlighted list row foreground
 
-[ui]
-# nerd_font = false             # render Nerd Font file icons (needs a patched font)
-# default_sort = "name"         # initial sort field: name | size | time
-# sort_desc = false             # sort descending by default
+ui:
+  # nerd_font: false             # render Nerd Font file icons (needs a patched font)
+  # default_sort: "name"         # initial sort field: name | size | time
+  # sort_desc: false             # sort descending by default
 
-[local]
-# start_dir = ""                # local pane start directory, "~" ok (default: process cwd)
+local:
+  # start_dir: ""                # local pane start directory, "~" ok (default: process cwd)
 ```
+
+命令行参数：
+
+- `--config <path>` —— 使用指定的 lazys3 配置文件替代默认位置（`lazys3 --config ./lazys3.yaml`）；文件必须存在、可读且是合法 YAML。
+- `--aws-config <path>` —— AWS 共享 config 文件（`lazys3 --aws-config ~/work/aws-config`）；优先级：flag > `AWS_CONFIG_FILE` > `~/.aws/config`。
+- `--aws-credentials <path>` —— AWS 共享 credentials 文件（`lazys3 --aws-credentials ~/work/aws-credentials`）；优先级：flag > `AWS_SHARED_CREDENTIALS_FILE` > `~/.aws/credentials`。
 
 说明：
 
+- 旧版本使用 `config.toml`，现已不再读取 —— 请重命名为 `config.yaml` 并把内容转换为 YAML 语法（stderr 会打印提示，且不会写模板覆盖它）。
 - `local.start_dir` 支持 `~` 和相对路径（相对启动目录解析）；必须是已存在的目录，否则会被忽略。
 - 旧版本的 `ui.transfer_panel_height` 已废弃且被忽略 —— 底部传输面板已被全屏传输浮层（`t`）取代。旧配置文件仍可正常加载。
 

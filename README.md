@@ -42,7 +42,7 @@ A terminal UI for browsing and operating S3-compatible object storage (AWS S3, A
 
 - Scrollable in-app help overlay (`?`) — the same keymap as the tables below
 - Single-line status bar: active profile, focused pane, selection count, running/done/failed transfer tallies, last info/error
-- Themeable colors and optional Nerd Font file icons via `config.toml`
+- Themeable colors and optional Nerd Font file icons via `config.yaml`
 - A broken config file never crashes the TUI — invalid values fall back to defaults with a log line
 
 ## Keybindings
@@ -169,32 +169,39 @@ Pick a profile, press `enter` to list buckets, and press `?` any time for the fu
 
 ## Configuration
 
-lazys3 reads `$XDG_CONFIG_HOME/lazys3/config.toml` (default `~/.config/lazys3/config.toml`). On first run a commented template is written so the knobs are discoverable. Every key is optional; invalid values fall back to the built-in defaults with a log line.
+lazys3 reads `$XDG_CONFIG_HOME/lazys3/config.yaml` (default `~/.config/lazys3/config.yaml`). On first run a commented template is written so the knobs are discoverable. Every key is optional; invalid values fall back to the built-in defaults with a log line.
 
-```toml
+```yaml
 # lazys3 configuration.
 # All keys are optional; the commented values show the built-in defaults.
 
-[theme]
-# Colors are hex strings: "#rgb", "#rrggbb" or "#rrggbbaa".
-# focused_border = "#20e71c"    # border of the focused pane
-# unfocused_border = "#555555"  # border of the unfocused pane (dual-pane mode)
-# title_fg = "#e39f00"          # status-bar profile chip foreground
-# title_bg = "#444745"          # status-bar profile chip background
-# status_error_fg = "#ffffff"   # status-bar error text
-# selected_fg = ""              # highlighted list row foreground
+theme:
+  # Colors are hex strings: "#rgb", "#rrggbb" or "#rrggbbaa".
+  # focused_border: "#20e71c"    # border of the focused pane
+  # unfocused_border: "#555555"  # border of the unfocused pane (dual-pane mode)
+  # title_fg: "#e39f00"          # status-bar profile chip foreground
+  # title_bg: "#444745"          # status-bar profile chip background
+  # status_error_fg: "#ffffff"   # status-bar error text
+  # selected_fg: ""              # highlighted list row foreground
 
-[ui]
-# nerd_font = false             # render Nerd Font file icons (needs a patched font)
-# default_sort = "name"         # initial sort field: name | size | time
-# sort_desc = false             # sort descending by default
+ui:
+  # nerd_font: false             # render Nerd Font file icons (needs a patched font)
+  # default_sort: "name"         # initial sort field: name | size | time
+  # sort_desc: false             # sort descending by default
 
-[local]
-# start_dir = ""                # local pane start directory, "~" ok (default: process cwd)
+local:
+  # start_dir: ""                # local pane start directory, "~" ok (default: process cwd)
 ```
+
+Flags:
+
+- `--config <path>` — read the lazys3 config from an explicit file instead of the default location (`lazys3 --config ./lazys3.yaml`); the file must exist, be readable and parse as YAML.
+- `--aws-config <path>` — AWS shared config file (`lazys3 --aws-config ~/work/aws-config`); precedence: flag > `AWS_CONFIG_FILE` > `~/.aws/config`.
+- `--aws-credentials <path>` — AWS shared credentials file (`lazys3 --aws-credentials ~/work/aws-credentials`); precedence: flag > `AWS_SHARED_CREDENTIALS_FILE` > `~/.aws/credentials`.
 
 Notes:
 
+- Older versions used `config.toml`; it is no longer read — rename it to `config.yaml` and convert the content to YAML syntax (a reminder is printed on stderr, and no template overwrites it).
 - `local.start_dir` accepts `~` and relative paths (resolved against the launch directory); it must be an existing directory or it is ignored.
 - `ui.transfer_panel_height` from older versions is deprecated and ignored — the bottom transfer panel was replaced by the full-screen transfers overlay (`t`). Old config files still load without error.
 

@@ -34,11 +34,13 @@ type Object struct {
 	isDir        bool
 
 	// Connection hints populated by listObjects from the active Option.
-	bucket      string
-	profile     string
-	endpointURL string
-	region      string
-	pathStyle   bool
+	bucket         string
+	profile        string
+	endpointURL    string
+	region         string
+	pathStyle      bool
+	configFile     string
+	credentialFile string
 }
 
 // Name returns the object's key (full path for files, prefix for directories).
@@ -70,6 +72,11 @@ type Option struct {
 	Region      string
 	PathStyle   bool
 	EndpointURL string
+	// ConfigFile/CredentialFile are the resolved AWS shared file paths
+	// (--aws-config/--aws-credentials > env > ~/.aws default); empty keeps
+	// the SDK defaults.
+	ConfigFile     string
+	CredentialFile string
 }
 
 func (o Object) Title() string { return o.name }
@@ -95,13 +102,15 @@ func (o Object) FilterValue() string { return o.DisplayName() }
 // can build a fresh S3 client directly.
 func (o Object) GetPreviewRequest() *preview.PreviewRequest {
 	return &preview.PreviewRequest{
-		Bucket:      o.bucket,
-		Key:         o.name,
-		Size:        o.size,
-		Profile:     o.profile,
-		EndpointURL: o.endpointURL,
-		PathStyle:   o.pathStyle,
-		Region:      o.region,
+		Bucket:         o.bucket,
+		Key:            o.name,
+		Size:           o.size,
+		Profile:        o.profile,
+		EndpointURL:    o.endpointURL,
+		PathStyle:      o.pathStyle,
+		Region:         o.region,
+		ConfigFile:     o.configFile,
+		CredentialFile: o.credentialFile,
 	}
 }
 
@@ -121,10 +130,12 @@ func FetchObjectListCmd(o Option) tea.Cmd {
 		defer cancel()
 
 		opt := s3store.S3Option{
-			UsePathStyle: o.PathStyle,
-			Region:       o.Region,
-			Profile:      o.Profile,
-			Endpoint:     o.EndpointURL,
+			UsePathStyle:   o.PathStyle,
+			Region:         o.Region,
+			Profile:        o.Profile,
+			Endpoint:       o.EndpointURL,
+			ConfigFile:     o.ConfigFile,
+			CredentialFile: o.CredentialFile,
 		}
 
 		cli, err := s3store.NewS3Client(ctx, opt)
@@ -172,14 +183,16 @@ func listObjects(ctx context.Context, cli *s3store.S3Store, bucket, key string, 
 			continue
 		}
 		objectList = append(objectList, Object{
-			name:        aws.ToString(prefix.Prefix),
-			prefix:      key,
-			isDir:       true,
-			bucket:      bucket,
-			profile:     o.Profile,
-			endpointURL: o.EndpointURL,
-			region:      o.Region,
-			pathStyle:   o.PathStyle,
+			name:           aws.ToString(prefix.Prefix),
+			prefix:         key,
+			isDir:          true,
+			bucket:         bucket,
+			profile:        o.Profile,
+			endpointURL:    o.EndpointURL,
+			region:         o.Region,
+			pathStyle:      o.PathStyle,
+			configFile:     o.ConfigFile,
+			credentialFile: o.CredentialFile,
 		})
 	}
 	for _, obj := range objs {
@@ -187,17 +200,19 @@ func listObjects(ctx context.Context, cli *s3store.S3Store, bucket, key string, 
 			continue
 		}
 		o := Object{
-			name:         aws.ToString(obj.Key),
-			prefix:       key,
-			size:         aws.ToInt64(obj.Size),
-			storageClass: string(obj.StorageClass),
-			etag:         aws.ToString(obj.ETag),
-			isDir:        false,
-			bucket:       bucket,
-			profile:      o.Profile,
-			endpointURL:  o.EndpointURL,
-			region:       o.Region,
-			pathStyle:    o.PathStyle,
+			name:           aws.ToString(obj.Key),
+			prefix:         key,
+			size:           aws.ToInt64(obj.Size),
+			storageClass:   string(obj.StorageClass),
+			etag:           aws.ToString(obj.ETag),
+			isDir:          false,
+			bucket:         bucket,
+			profile:        o.Profile,
+			endpointURL:    o.EndpointURL,
+			region:         o.Region,
+			pathStyle:      o.PathStyle,
+			configFile:     o.ConfigFile,
+			credentialFile: o.CredentialFile,
 		}
 		if obj.LastModified != nil {
 			o.modTime = *obj.LastModified

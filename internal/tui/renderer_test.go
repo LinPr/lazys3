@@ -2,6 +2,7 @@ package tui
 
 import (
 	"os"
+	"runtime"
 	"testing"
 )
 
@@ -35,10 +36,40 @@ func TestTermLacksREP(t *testing.T) {
 	}
 }
 
+// TestNeedsStandardRenderer pins the GOOS/TERM matrix: Windows always
+// forces the standard renderer (conhost's partial VT support and beta1's
+// missing resize events make the cursed renderer unsafe there), unix only
+// when $TERM lacks REP.
+func TestNeedsStandardRenderer(t *testing.T) {
+	cases := []struct {
+		goos string
+		term string
+		want bool
+	}{
+		{"windows", "", true},
+		{"windows", "xterm-256color", true}, // e.g. MSYS/Cygwin shells
+		{"linux", "xterm-256color", false},
+		{"linux", "screen-256color", true},
+		{"darwin", "screen", true},
+		{"darwin", "xterm-256color", false},
+		{"linux", "", false},
+	}
+	for _, c := range cases {
+		if got := needsStandardRenderer(c.goos, c.term); got != c.want {
+			t.Errorf("needsStandardRenderer(%q, %q) = %v, want %v", c.goos, c.term, got, c.want)
+		}
+	}
+}
+
 // TestEnsureCompatRenderer pins the env contract: under a REP-less TERM
 // the standard renderer is forced, elsewhere the env is left unset, and
-// an explicit user setting is never overridden.
+// an explicit user setting is never overridden. (Runs on the host GOOS —
+// non-windows in CI — so the Windows branch is pinned by
+// TestNeedsStandardRenderer instead.)
 func TestEnsureCompatRenderer(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows forces the standard renderer regardless of TERM")
+	}
 	cases := []struct {
 		name    string
 		term    string

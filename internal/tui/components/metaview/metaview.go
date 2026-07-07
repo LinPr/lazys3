@@ -195,10 +195,12 @@ func (m *Model) ShowProfile(name, endpointURL, region string, configFiles []stri
 // newClient builds a fresh S3 client from the request's connection hints.
 func newClient(ctx context.Context, r preview.PreviewRequest) (*s3.Client, error) {
 	cli, err := s3store.NewS3Client(ctx, s3store.S3Option{
-		Profile:      r.Profile,
-		Endpoint:     r.EndpointURL,
-		UsePathStyle: r.PathStyle,
-		Region:       r.Region,
+		Profile:        r.Profile,
+		Endpoint:       r.EndpointURL,
+		UsePathStyle:   r.PathStyle,
+		Region:         r.Region,
+		ConfigFile:     r.ConfigFile,
+		CredentialFile: r.CredentialFile,
 	})
 	if err != nil {
 		return nil, err

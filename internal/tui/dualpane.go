@@ -76,7 +76,12 @@ func (m *Model) handleDualPaneToggle() tea.Cmd {
 // size immediately, so both panes render at matching sizes without
 // waiting for the next WindowSizeMsg or tab.
 func (m *Model) enterDualPane() tea.Cmd {
-	if m.width < minDualPaneWidth {
+	// width 0 means no WindowSizeMsg has arrived yet (bubbletea v2 on
+	// Windows delivers no resize events after startup, and the initial
+	// size message is sent asynchronously) — an unknown size is not a
+	// narrow one, so enter and let the next WindowSizeMsg lay the panes
+	// out (or auto-exit via initComponentsSize if genuinely too narrow).
+	if m.width > 0 && m.width < minDualPaneWidth {
 		m.statusBar.SetInfo(fmt.Sprintf("terminal too narrow for dual-pane (needs ≥%d cols)", minDualPaneWidth))
 		return nil
 	}
@@ -170,10 +175,10 @@ type dirSync struct {
 // dirSyncCmds turns the specs into sync transfer rows with the full
 // syncmodal wiring (cancellable ctx, 200ms poll loop, files-done note,
 // summary note, history record).
-func dirSyncCmds(specs []dirSync, endpointURL string, pathStyle bool, profile string) []tea.Cmd {
+func dirSyncCmds(specs []dirSync, conn connParams) []tea.Cmd {
 	cmds := make([]tea.Cmd, 0, len(specs))
 	for _, d := range specs {
-		cmds = append(cmds, syncTransferCmd(d.src, d.dst, d.label, syncmodal.Flags{}, endpointURL, pathStyle, profile))
+		cmds = append(cmds, syncTransferCmd(d.src, d.dst, d.label, syncmodal.Flags{}, conn))
 	}
 	return cmds
 }
@@ -297,7 +302,7 @@ func (m *Model) promptCopyToLocal() tea.Cmd {
 	if len(files) == 0 && len(syncs) == 0 {
 		return errCmd(fmt.Errorf("copy: %s", wildcardSkipNote(skipped)))
 	}
-	endpointURL, pathStyle, profile := m.syncConnParams()
+	conn := m.syncConnParams()
 	body := fmt.Sprintf("Download %s to %s?", transferCountPhrase(len(files), len(syncs)), localDir)
 	if len(skipped) > 0 {
 		body += " (" + wildcardSkipNote(skipped) + ")"
@@ -312,7 +317,7 @@ func (m *Model) promptCopyToLocal() tea.Cmd {
 					return filepath.Join(localDir, path.Base(o.Name()))
 				}))
 			}
-			cmds = append(cmds, dirSyncCmds(syncs, endpointURL, pathStyle, profile)...)
+			cmds = append(cmds, dirSyncCmds(syncs, conn)...)
 			return tea.Batch(cmds...)
 		},
 	)
@@ -361,7 +366,7 @@ func (m *Model) promptCopyToRemote() tea.Cmd {
 	if len(paths) == 0 && len(syncs) == 0 {
 		return errCmd(fmt.Errorf("copy: %s", wildcardSkipNote(skipped)))
 	}
-	endpointURL, pathStyle, profile := m.syncConnParams()
+	conn := m.syncConnParams()
 	body := fmt.Sprintf("Upload %s to s3://%s/%s?", transferCountPhrase(len(paths), len(syncs)), bucket, prefix)
 	if len(skipped) > 0 {
 		body += " (" + wildcardSkipNote(skipped) + ")"
@@ -374,7 +379,7 @@ func (m *Model) promptCopyToRemote() tea.Cmd {
 			if len(paths) > 0 {
 				cmds = append(cmds, uploadCmds(opt, bucket, prefix, paths))
 			}
-			cmds = append(cmds, dirSyncCmds(syncs, endpointURL, pathStyle, profile)...)
+			cmds = append(cmds, dirSyncCmds(syncs, conn)...)
 			return tea.Batch(cmds...)
 		},
 	)

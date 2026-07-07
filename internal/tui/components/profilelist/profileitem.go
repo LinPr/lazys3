@@ -7,6 +7,7 @@ import (
 	"log"
 	"strings"
 
+	appcfg "github.com/LinPr/lazys3/internal/config"
 	"github.com/aws/aws-sdk-go-v2/config"
 	tea "github.com/charmbracelet/bubbletea/v2"
 )
@@ -42,9 +43,9 @@ type ReadAwsConfigResult struct {
 	Err      error
 }
 
-func ReadAwsConfigProfileListCmd() tea.Cmd {
+func ReadAwsConfigProfileListCmd(files appcfg.AWSFiles) tea.Cmd {
 	return func() tea.Msg {
-		configs, err := LoadAwsConfig()
+		configs, err := LoadAwsConfig(files)
 		if err != nil {
 			return ReadAwsConfigResult{Err: err}
 		}
@@ -61,18 +62,41 @@ func ReadAwsConfigProfileListCmd() tea.Cmd {
 	}
 }
 
-func LoadAwsConfig() ([]config.SharedConfig, error) {
-	conf, err := loadIniFiles(DefaultSharedConfigFiles)
+// LoadAwsConfig lists every profile found in the resolved shared config
+// and credentials files (both are scanned, so credentials-only profiles
+// show up too) and loads each one through the SDK's shared-config parser
+// pointed at the same files.
+func LoadAwsConfig(files appcfg.AWSFiles) ([]config.SharedConfig, error) {
+	configFiles := fileSlice(files.ConfigFile)
+	credentialsFiles := fileSlice(files.CredentialsFile)
+
+	conf, err := loadIniFiles(append(append([]string{}, configFiles...), credentialsFiles...))
 	if err != nil {
 		return nil, err
 	}
 
 	sections := conf.List()
 	configs := make([]config.SharedConfig, 0, len(sections))
+	seen := make(map[string]bool, len(sections))
 	for _, section := range sections {
+		// The config file prefixes profile sections with "profile "; the
+		// credentials file does not. Trim and dedupe so a profile present
+		// in both files is listed once.
 		section = strings.TrimPrefix(section, "profile ")
+		if seen[section] {
+			continue
+		}
+		seen[section] = true
 		log.Println("section:", section)
-		sharedConf, err := config.LoadSharedConfigProfile(context.Background(), section)
+		sharedConf, err := config.LoadSharedConfigProfile(context.Background(), section,
+			func(o *config.LoadSharedConfigOptions) {
+				if len(configFiles) > 0 {
+					o.ConfigFiles = configFiles
+				}
+				if len(credentialsFiles) > 0 {
+					o.CredentialsFiles = credentialsFiles
+				}
+			})
 		if err != nil {
 			log.Println("load shared config profile failed:", err)
 		}
@@ -80,4 +104,13 @@ func LoadAwsConfig() ([]config.SharedConfig, error) {
 	}
 
 	return configs, nil
+}
+
+// fileSlice wraps a single resolved path in a slice, or nil when the path
+// is empty (no home dir) so the SDK keeps its own defaults.
+func fileSlice(path string) []string {
+	if path == "" {
+		return nil
+	}
+	return []string{path}
 }

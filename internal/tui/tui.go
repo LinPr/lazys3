@@ -43,20 +43,24 @@ type size struct {
 }
 
 type Model struct {
-	state           state.State
-	profileList     profilelist.Model
-	bucketList      bucketlist.Model
-	objectlist      objectlist.Model
-	contentView     preview.Model
-	metaView        metaview.Model
-	transferPanel   transferpanel.Model
-	modal           modal.Model
-	statusBar       statusbar.Model
-	help            help.Model
-	historyView     historyview.Model
-	transferView    transferview.Model
-	versionView     versionview.Model
-	historyStore    *history.Store
+	state         state.State
+	profileList   profilelist.Model
+	bucketList    bucketlist.Model
+	objectlist    objectlist.Model
+	contentView   preview.Model
+	metaView      metaview.Model
+	transferPanel transferpanel.Model
+	modal         modal.Model
+	statusBar     statusbar.Model
+	help          help.Model
+	historyView   historyview.Model
+	transferView  transferview.Model
+	versionView   versionview.Model
+	historyStore  *history.Store
+	// awsFiles are the resolved AWS shared config/credentials paths
+	// (--aws-config/--aws-credentials > env > ~/.aws default), threaded
+	// into every S3 option so ops target the same files as the listings.
+	awsFiles        config.AWSFiles
 	selectedProfile string
 	selectedBucket  string
 	selectedObject  string
@@ -76,13 +80,14 @@ type Model struct {
 }
 
 func NewLazyS3Model() Model {
-	return NewLazyS3ModelWithConfig(config.Config{})
+	return NewLazyS3ModelWithConfig(config.Config{}, config.ResolveAWSFiles("", ""))
 }
 
 // NewLazyS3ModelWithConfig constructs the top-level model from the loaded
 // user config (cmd/root.go loads it once and applies the theme to the
-// style package before calling this). The zero Config keeps every default.
-func NewLazyS3ModelWithConfig(cfg config.Config) Model {
+// style package before calling this) plus the resolved AWS shared file
+// paths. The zero Config keeps every default.
+func NewLazyS3ModelWithConfig(cfg config.Config, awsFiles config.AWSFiles) Model {
 	// Work around a bubbletea-beta1 renderer bug under GNU screen / the
 	// Linux console before tea.Program picks its renderer (see renderer.go).
 	ensureCompatRenderer()
@@ -107,7 +112,8 @@ func NewLazyS3ModelWithConfig(cfg config.Config) Model {
 	}
 	return Model{
 		state:         state.ActiveProfileList,
-		profileList:   profilelist.NewModel(),
+		awsFiles:      awsFiles,
+		profileList:   profilelist.NewModelWithFiles(awsFiles),
 		bucketList:    bucketlist.NewModel(),
 		objectlist:    objectList,
 		contentView:   preview.NewModel(),
@@ -127,6 +133,12 @@ func NewLazyS3ModelWithConfig(cfg config.Config) Model {
 // Init implements tea.Model.
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
+		// Ask the terminal for its size once at startup. bubbletea sends
+		// the initial WindowSizeMsg asynchronously, and on Windows no
+		// further resize events arrive at all (bubbletea#1601), so this
+		// explicit query is a cheap second chance for the layout to learn
+		// the real size before the user starts pressing keys.
+		tea.RequestWindowSize,
 		m.profileList.Init(),
 		m.bucketList.Init(),
 		m.objectlist.Init(),

@@ -10,22 +10,22 @@ import (
 func TestLoadValid(t *testing.T) {
 	dir := t.TempDir()
 	startDir := t.TempDir()
-	path := filepath.Join(dir, "config.toml")
+	path := filepath.Join(dir, "config.yaml")
 	body := `
-[theme]
-focused_border = "#ff0000"
-unfocused_border = "#333"
-title_fg = "#aabbccdd"
-selected_fg = "#00ff00"
+theme:
+  focused_border: "#ff0000"
+  unfocused_border: "#333"
+  title_fg: "#aabbccdd"
+  selected_fg: "#00ff00"
 
-[ui]
-nerd_font = true
-default_sort = "size"
-sort_desc = true
-transfer_panel_height = 8
+ui:
+  nerd_font: true
+  default_sort: "size"
+  sort_desc: true
+  transfer_panel_height: 8
 
-[local]
-start_dir = "` + startDir + `"
+local:
+  start_dir: "` + startDir + `"
 `
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
@@ -59,17 +59,25 @@ start_dir = "` + startDir + `"
 	}
 }
 
-func TestMissingFileWritesDefaultsAndReturnsZero(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "lazys3", "config.toml")
-	cfg := LoadFrom(path)
+func TestMissingDefaultWritesTemplateAndReturnsZero(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", base)
+	cfg, warn, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if warn != "" {
+		t.Errorf("no warning expected, got %q", warn)
+	}
 	if cfg != (Config{}) {
 		t.Errorf("missing file should return zero config, got %+v", cfg)
 	}
+	path := filepath.Join(base, "lazys3", "config.yaml")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("default file was not written: %v", err)
 	}
-	for _, want := range []string{"[theme]", "[ui]", "[local]", "nerd_font", "start_dir"} {
+	for _, want := range []string{"theme:", "ui:", "local:", "nerd_font", "start_dir"} {
 		if !strings.Contains(string(data), want) {
 			t.Errorf("default file should mention %q", want)
 		}
@@ -85,16 +93,87 @@ func TestMissingFileWritesDefaultsAndReturnsZero(t *testing.T) {
 	}
 }
 
-func TestBadValuesFallBackToDefaults(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.toml")
-	body := `
-[theme]
-focused_border = "not-a-color"
-title_fg = "#12"
+func TestLegacyTomlSkipsTemplate(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", base)
+	dir := filepath.Join(base, "lazys3")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte("[ui]\nnerd_font = true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, warn, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	// The TOML file is no longer read (defaults win)…
+	if cfg != (Config{}) {
+		t.Errorf("legacy toml must not be parsed, got %+v", cfg)
+	}
+	// …the caller gets a user-visible hint (the standard logger is
+	// discarded in non-debug runs, so returning it is the only way the
+	// user ever sees it)…
+	if !strings.Contains(warn, "config.toml") || !strings.Contains(warn, "config.yaml") {
+		t.Errorf("legacy toml should return a rename hint, got %q", warn)
+	}
+	// …and no YAML template may clobber the user's intent.
+	if _, err := os.Stat(filepath.Join(dir, "config.yaml")); !os.IsNotExist(err) {
+		t.Errorf("config.yaml template must not be written next to a legacy config.toml (stat err = %v)", err)
+	}
+}
 
-[ui]
-default_sort = "alphabetical"
-transfer_panel_height = 42
+func TestExplicitConfigMissingIsError(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "nope.yaml")
+	if _, _, err := Load(missing); err == nil {
+		t.Fatal("Load with a missing explicit --config path should error")
+	}
+	// No template is written for an explicit path either.
+	if _, err := os.Stat(missing); !os.IsNotExist(err) {
+		t.Errorf("no template should be written for an explicit path (stat err = %v)", err)
+	}
+}
+
+func TestExplicitConfigLoads(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "custom.yaml")
+	if err := os.WriteFile(path, []byte("ui:\n  nerd_font: true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.UI.NerdFont {
+		t.Error("explicit config file was not read")
+	}
+}
+
+func TestExplicitConfigStrictErrors(t *testing.T) {
+	// A directory stats fine but is not a config file.
+	if _, _, err := Load(t.TempDir()); err == nil {
+		t.Error("Load with --config pointing at a directory should error")
+	}
+	// A YAML parse error is a hard error for an explicit path (the
+	// default location stays forgiving via LoadFrom).
+	bad := filepath.Join(t.TempDir(), "bad.yaml")
+	if err := os.WriteFile(bad, []byte("ui: [this is not yaml\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Load(bad); err == nil {
+		t.Error("Load with a malformed explicit --config file should error")
+	}
+}
+
+func TestBadValuesFallBackToDefaults(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	body := `
+theme:
+  focused_border: "not-a-color"
+  title_fg: "#12"
+
+ui:
+  default_sort: "alphabetical"
+  transfer_panel_height: 42
 `
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
@@ -112,8 +191,8 @@ transfer_panel_height = 42
 }
 
 func TestMalformedFileReturnsDefaults(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.toml")
-	if err := os.WriteFile(path, []byte("this is not toml ["), 0o644); err != nil {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("ui: [this is not yaml\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if cfg := LoadFrom(path); cfg != (Config{}) {
@@ -124,8 +203,8 @@ func TestMalformedFileReturnsDefaults(t *testing.T) {
 func TestStartDirHonoredOnlyWhenDirExists(t *testing.T) {
 	write := func(t *testing.T, startDir string) Config {
 		t.Helper()
-		path := filepath.Join(t.TempDir(), "config.toml")
-		body := "[local]\nstart_dir = \"" + startDir + "\"\n"
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		body := "local:\n  start_dir: \"" + startDir + "\"\n"
 		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -152,8 +231,8 @@ func TestStartDirHonoredOnlyWhenDirExists(t *testing.T) {
 func TestStartDirExpandsTildeAndRelative(t *testing.T) {
 	write := func(t *testing.T, startDir string) Config {
 		t.Helper()
-		path := filepath.Join(t.TempDir(), "config.toml")
-		body := "[local]\nstart_dir = \"" + startDir + "\"\n"
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		body := "local:\n  start_dir: \"" + startDir + "\"\n"
 		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}

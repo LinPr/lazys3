@@ -18,11 +18,13 @@ import (
 // Option used to fetch the list, so Bucket stays self-contained for the
 // overlay component without reaching back into TUI state.
 type Bucket struct {
-	name        string
-	region      string
-	profile     string
-	endpointURL string
-	pathStyle   bool
+	name           string
+	region         string
+	profile        string
+	endpointURL    string
+	pathStyle      bool
+	configFile     string
+	credentialFile string
 }
 
 func (b Bucket) Name() string   { return b.name }
@@ -38,11 +40,13 @@ func (b Bucket) FilterValue() string { return b.name }
 // from the active Option), so the overlay layer can build a fresh S3 client.
 func (b Bucket) GetPreviewRequest() *preview.PreviewRequest {
 	return &preview.PreviewRequest{
-		Bucket:      b.name,
-		Profile:     b.profile,
-		EndpointURL: b.endpointURL,
-		PathStyle:   b.pathStyle,
-		Region:      b.region,
+		Bucket:         b.name,
+		Profile:        b.profile,
+		EndpointURL:    b.endpointURL,
+		PathStyle:      b.pathStyle,
+		Region:         b.region,
+		ConfigFile:     b.configFile,
+		CredentialFile: b.credentialFile,
 	}
 }
 
@@ -56,6 +60,11 @@ type Option struct {
 	Region      string
 	PathStyle   bool
 	EndpointURL string
+	// ConfigFile/CredentialFile are the resolved AWS shared file paths
+	// (--aws-config/--aws-credentials > env > ~/.aws default); empty keeps
+	// the SDK defaults.
+	ConfigFile     string
+	CredentialFile string
 }
 
 type FetchBucketListResultMsg struct {
@@ -73,10 +82,12 @@ func FetchBucketListCmd(o *Option) tea.Cmd {
 		defer cancel()
 
 		opt := s3store.S3Option{
-			UsePathStyle: o.PathStyle,
-			Region:       o.Region,
-			Profile:      o.Profile,
-			Endpoint:     o.EndpointURL,
+			UsePathStyle:   o.PathStyle,
+			Region:         o.Region,
+			Profile:        o.Profile,
+			Endpoint:       o.EndpointURL,
+			ConfigFile:     o.ConfigFile,
+			CredentialFile: o.CredentialFile,
 		}
 
 		cli, err := s3store.NewS3Client(ctx, opt)
@@ -118,11 +129,13 @@ func listBuckets(ctx context.Context, cli *s3store.S3Store, o *Option) ([]Bucket
 	bucketList := make([]Bucket, 0, len(buckets))
 	for _, bucket := range buckets {
 		b := Bucket{
-			name:        aws.ToString(bucket.Name),
-			profile:     o.Profile,
-			endpointURL: o.EndpointURL,
-			pathStyle:   o.PathStyle,
-			region:      o.Region,
+			name:           aws.ToString(bucket.Name),
+			profile:        o.Profile,
+			endpointURL:    o.EndpointURL,
+			pathStyle:      o.PathStyle,
+			region:         o.Region,
+			configFile:     o.ConfigFile,
+			credentialFile: o.CredentialFile,
 		}
 		bucketList = append(bucketList, b)
 	}

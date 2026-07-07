@@ -5,6 +5,7 @@ package profilelist
 import (
 	"log"
 
+	appcfg "github.com/LinPr/lazys3/internal/config"
 	"github.com/LinPr/lazys3/internal/tui/components/filter"
 	"github.com/LinPr/lazys3/internal/tui/components/style"
 	"github.com/charmbracelet/bubbles/v2/key"
@@ -17,13 +18,26 @@ const ProfileListTitle = "AWS Profiles"
 type Model struct {
 	profileList list.Model
 
+	// files are the resolved AWS shared config/credentials paths the
+	// profile listing reads (flag > env > ~/.aws default).
+	files appcfg.AWSFiles
+
 	// Outer dimensions (including the border frame) from SetSize.
 	width   int
 	height  int
 	focused bool
 }
 
+// NewModel builds the picker against the default AWS file resolution
+// (env vars, then ~/.aws). cmd/root.go uses NewModelWithFiles to inject
+// the --aws-config/--aws-credentials flags.
 func NewModel() Model {
+	return NewModelWithFiles(appcfg.ResolveAWSFiles("", ""))
+}
+
+// NewModelWithFiles builds the picker reading profiles from the given
+// resolved shared config/credentials files.
+func NewModelWithFiles(files appcfg.AWSFiles) Model {
 	items := make([]list.Item, 0)
 	delegate := list.NewDefaultDelegate()
 	// Theme override for the highlighted row (style.Apply runs before the
@@ -46,13 +60,18 @@ func NewModel() Model {
 		key.WithKeys("pgdown"), key.WithHelp("pgdn", "next page"))
 	return Model{
 		profileList: profileList,
+		files:       files,
 		focused:     true,
 	}
 }
 
 func (m Model) Init() tea.Cmd {
-	return ReadAwsConfigProfileListCmd()
+	return ReadAwsConfigProfileListCmd(m.files)
 }
+
+// Files returns the resolved shared config/credentials paths the picker
+// reads; the metadata overlay renders them.
+func (m Model) Files() appcfg.AWSFiles { return m.files }
 
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	var cmd tea.Cmd

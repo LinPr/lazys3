@@ -21,10 +21,12 @@ import (
 // the listing itself.
 func s3OptionFromListOption(o Option) s3store.S3Option {
 	return s3store.S3Option{
-		UsePathStyle: o.PathStyle,
-		Region:       o.Region,
-		Profile:      o.Profile,
-		Endpoint:     o.EndpointURL,
+		UsePathStyle:   o.PathStyle,
+		Region:         o.Region,
+		Profile:        o.Profile,
+		Endpoint:       o.EndpointURL,
+		ConfigFile:     o.ConfigFile,
+		CredentialFile: o.CredentialFile,
 	}
 }
 

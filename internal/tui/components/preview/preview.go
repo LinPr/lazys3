@@ -49,6 +49,11 @@ type PreviewRequest struct {
 	EndpointURL string
 	PathStyle   bool
 	Region      string
+	// ConfigFile/CredentialFile are the resolved AWS shared file paths
+	// (--aws-config/--aws-credentials > env > ~/.aws default); empty keeps
+	// the SDK defaults.
+	ConfigFile     string
+	CredentialFile string
 
 	Bucket string
 	Key    string
@@ -153,10 +158,12 @@ func (m *Model) ShowRemote(req *PreviewRequest) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), fetchTimeout)
 		defer cancel()
 		cli, err := s3store.NewS3Client(ctx, s3store.S3Option{
-			Profile:      r.Profile,
-			Endpoint:     r.EndpointURL,
-			UsePathStyle: r.PathStyle,
-			Region:       r.Region,
+			Profile:        r.Profile,
+			Endpoint:       r.EndpointURL,
+			UsePathStyle:   r.PathStyle,
+			Region:         r.Region,
+			ConfigFile:     r.ConfigFile,
+			CredentialFile: r.CredentialFile,
 		})
 		if err != nil {
 			return ContentMsg{Seq: seq, Err: err}

@@ -22,10 +22,12 @@ const fetchTimeout = 30 * time.Second
 // same endpoint/profile/path-style as the listing that opened it.
 func s3Option(o objectlist.Option) s3store.S3Option {
 	return s3store.S3Option{
-		UsePathStyle: o.PathStyle,
-		Region:       o.Region,
-		Profile:      o.Profile,
-		Endpoint:     o.EndpointURL,
+		UsePathStyle:   o.PathStyle,
+		Region:         o.Region,
+		Profile:        o.Profile,
+		Endpoint:       o.EndpointURL,
+		ConfigFile:     o.ConfigFile,
+		CredentialFile: o.CredentialFile,
 	}
 }
 

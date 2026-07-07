@@ -33,31 +33,31 @@ jobs:
 
     - name: Build for Linux AMD64
       run: |
-        GOOS=linux GOARCH=amd64 CGO_ENABLE=0 go build -ldflags "-s -w" -o s6cmd-linux-amd64 .
+        GOOS=linux GOARCH=amd64 CGO_ENABLE=0 go build -ldflags "-s -w" -o lazys3-linux-amd64 .
 
     - name: Build for Linux ARM64
       run: |
-        GOOS=linux GOARCH=arm64 CGO_ENABLE=0 go build -ldflags "-s -w" -o s6cmd-linux-arm64 .
+        GOOS=linux GOARCH=arm64 CGO_ENABLE=0 go build -ldflags "-s -w" -o lazys3-linux-arm64 .
 
     - name: Build for Windows AMD64
       run: |
-        GOOS=windows GOARCH=amd64 CGO_ENABLE=0 go build -ldflags "-s -w" -o s6cmd-windows-amd64.exe .
+        GOOS=windows GOARCH=amd64 CGO_ENABLE=0 go build -ldflags "-s -w" -o lazys3-windows-amd64.exe .
 
     - name: Build for Windows ARM64
       run: |
-        GOOS=windows GOARCH=arm64 CGO_ENABLE=0 go build -ldflags "-s -w" -o s6cmd-windows-arm64.exe .
+        GOOS=windows GOARCH=arm64 CGO_ENABLE=0 go build -ldflags "-s -w" -o lazys3-windows-arm64.exe .
 
     - name: Build for macOS AMD64
       run: |
-        GOOS=darwin GOARCH=amd64 CGO_ENABLE=0 go build -ldflags "-s -w" -o s6cmd-darwin-amd64 .
+        GOOS=darwin GOARCH=amd64 CGO_ENABLE=0 go build -ldflags "-s -w" -o lazys3-darwin-amd64 .
 
     - name: Build for macOS ARM64
       run: |
-        GOOS=darwin GOARCH=arm64 CGO_ENABLE=0 go build -ldflags "-s -w" -o s6cmd-darwin-arm64 .
+        GOOS=darwin GOARCH=arm64 CGO_ENABLE=0 go build -ldflags "-s -w" -o lazys3-darwin-arm64 .
 
     - name: Create checksums
       run: |
-        sha256sum s6cmd-* > checksums.txt
+        sha256sum lazys3-* > checksums.txt
 
     - name: Create Release
       uses: softprops/action-gh-release@v1
@@ -68,12 +68,12 @@ jobs:
         prerelease: false
         generate_release_notes: true
         files: |
-          s6cmd-linux-amd64
-          s6cmd-linux-arm64
-          s6cmd-windows-amd64.exe
-          s6cmd-windows-arm64.exe
-          s6cmd-darwin-amd64
-          s6cmd-darwin-arm64
+          lazys3-linux-amd64
+          lazys3-linux-arm64
+          lazys3-windows-amd64.exe
+          lazys3-windows-arm64.exe
+          lazys3-darwin-amd64
+          lazys3-darwin-arm64
           checksums.txt
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

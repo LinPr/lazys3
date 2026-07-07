@@ -3,6 +3,7 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"os"
 
@@ -87,7 +88,7 @@ func Execute() {
 }
 
 // logInit redirects the standard logger's output to a debug log file when
-// debug is true, or to /dev/null otherwise. It returns a cleanup function
+// debug is true, or discards it otherwise. It returns a cleanup function
 // the caller must defer-close after the program is done, so the file handle
 // stays open for the program's lifetime (closing it on return from logInit
 // would discard every log line emitted afterwards).
@@ -101,10 +102,9 @@ func logInit(debug bool) func() {
 		return func() { _ = f.Close() }
 	}
 
-	f, err := tea.LogToFile("/dev/null", "debug")
-	if err != nil {
-		fmt.Println("Error creating log file:", err)
-		os.Exit(1)
-	}
-	return func() { _ = f.Close() }
+	// No file at all: io.Discard works on every platform, unlike the
+	// previous /dev/null (which does not exist on Windows — its null
+	// device is named NUL).
+	log.SetOutput(io.Discard)
+	return func() {}
 }

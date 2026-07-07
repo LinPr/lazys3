@@ -88,44 +88,16 @@ func (o Object) Description() string {
 
 func (o Object) FilterValue() string { return o.DisplayName() }
 
-// GetPreviewContent returns a metadata-only preview string. Live content
-// fetching (ranged GetObject for text, HeadObject metadata for binaries)
-// is performed asynchronously by the preview component, which overlays the
-// result on top of this metadata block.
-func (o Object) GetPreviewContent() string {
-	var sb strings.Builder
-	if o.isDir {
-		fmt.Fprintf(&sb, "Key:    %s\n", o.name)
-		sb.WriteString("Type:   directory\n")
-		return sb.String()
-	}
-	fmt.Fprintf(&sb, "Key:           %s\n", o.name)
-	fmt.Fprintf(&sb, "Size:          %s\n", strutil.HumanizeBytes(o.size))
-	fmt.Fprintf(&sb, "Modified:      %s\n", o.modTime.Format(time.RFC3339))
-	if o.etag != "" {
-		fmt.Fprintf(&sb, "ETag:          %s\n", o.etag)
-	}
-	if o.storageClass != "" {
-		fmt.Fprintf(&sb, "StorageClass:  %s\n", o.storageClass)
-	}
-	return sb.String()
-}
-
-// GetPreviewRequest returns the parameters the preview component needs to
-// fetch live metadata/content for this object. The connection hints and
-// bucket name are stamped onto the Object by listObjects at fetch time, so
-// the returned request is fully populated and the preview layer can build a
-// fresh S3 client directly.
+// GetPreviewRequest returns the parameters the preview/metadata overlays
+// need to fetch live content or metadata for this object. The connection
+// hints and bucket name are stamped onto the Object by listObjects at fetch
+// time, so the returned request is fully populated and the overlay layer
+// can build a fresh S3 client directly.
 func (o Object) GetPreviewRequest() *preview.PreviewRequest {
 	return &preview.PreviewRequest{
-		Kind:        "object",
 		Bucket:      o.bucket,
 		Key:         o.name,
-		IsDir:       o.isDir,
 		Size:        o.size,
-		ModTime:     o.modTime,
-		Storage:     o.storageClass,
-		ETag:        o.etag,
 		Profile:     o.profile,
 		EndpointURL: o.endpointURL,
 		PathStyle:   o.pathStyle,

@@ -2,8 +2,6 @@ package bucketlist
 
 import (
 	"context"
-	"fmt"
-	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -16,9 +14,9 @@ import (
 
 // Bucket carries a single S3 bucket plus the connection hints (profile,
 // endpoint, region, path-style) needed to issue follow-up calls against it
-// from the preview layer. The hints are populated by listBuckets from the
+// from the metadata overlay. The hints are populated by listBuckets from the
 // Option used to fetch the list, so Bucket stays self-contained for the
-// preview component without reaching back into TUI state.
+// overlay component without reaching back into TUI state.
 type Bucket struct {
 	name        string
 	region      string
@@ -34,29 +32,12 @@ func (b Bucket) Title() string       { return b.name }
 func (b Bucket) Description() string { return b.region }
 func (b Bucket) FilterValue() string { return b.name }
 
-// GetPreviewContent returns a stubbed metadata block. The real, live preview
-// (HeadBucket/GetBucketLocation/GetBucketVersioning) is performed
-// asynchronously by the preview component via GetPreviewRequest and overlays
-// this fallback block.
-func (b Bucket) GetPreviewContent() string {
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "Name:     %s\n", b.name)
-	if b.region != "" {
-		fmt.Fprintf(&sb, "Region:   %s\n", b.region)
-	}
-	if b.endpointURL != "" {
-		fmt.Fprintf(&sb, "Endpoint: %s\n", b.endpointURL)
-	}
-	return sb.String()
-}
-
-// GetPreviewRequest returns the parameters the preview component needs to
+// GetPreviewRequest returns the parameters the metadata overlay needs to
 // fetch live bucket metadata (HeadBucket/GetBucketLocation/GetBucketVersioning).
 // The connection hints travel on the Bucket itself (populated by listBuckets
-// from the active Option), so the preview layer can build a fresh S3 client.
+// from the active Option), so the overlay layer can build a fresh S3 client.
 func (b Bucket) GetPreviewRequest() *preview.PreviewRequest {
 	return &preview.PreviewRequest{
-		Kind:        "bucket",
 		Bucket:      b.name,
 		Profile:     b.profile,
 		EndpointURL: b.endpointURL,

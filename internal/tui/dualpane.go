@@ -72,9 +72,7 @@ func (m *Model) handleDualPaneToggle() tea.Cmd {
 // loading the start directory fresh (ResetToStartDir) — 'l' always opens
 // the same view, no matter where a previous dual session navigated to.
 // Navigation within one open session persists as usual; only close→reopen
-// resets. The preview is closed (matching exit/switch) so 'l' visibly
-// swaps the preview for the local pane rather than rendering an identical
-// layout. resizeLists applies the dual layout for the current terminal
+// resets. resizeLists applies the dual layout for the current terminal
 // size immediately, so both panes render at matching sizes without
 // waiting for the next WindowSizeMsg or tab.
 func (m *Model) enterDualPane() tea.Cmd {
@@ -85,32 +83,25 @@ func (m *Model) enterDualPane() tea.Cmd {
 	m.dualPane = true
 	m.paneFocus = focusLocal
 	m.applyPaneFocus()
-	m.closePreview()
 	m.resizeLists()
 	return m.localList.ResetToStartDir()
 }
 
 // exitDualPane restores the single-pane layout (resizeLists puts the
-// remote lists back at full width for the current terminal size). The
-// preview is closed so single-pane never renders with a stale dual-sized
-// preview.
+// remote lists back at full width for the current terminal size).
 func (m *Model) exitDualPane() {
 	m.dualPane = false
 	m.paneFocus = focusRemote
 	m.applyPaneFocus()
-	m.closePreview()
 	m.resizeLists()
 }
 
 // handlePaneSwitch moves focus between the panes ('tab'). Outside dual
-// mode it is a handled no-op so tab never leaks into the active list. The
-// preview is closed before switching (matching the closePreview-on-
-// navigation precedent) — 'p' re-opens it against the new focus.
+// mode it is a handled no-op so tab never leaks into the active list.
 func (m *Model) handlePaneSwitch() {
 	if !m.dualPane {
 		return
 	}
-	m.closePreview()
 	// The status bar's persistent pane indicator reflects the new focus;
 	// no transient info note needed.
 	if m.paneFocus == focusRemote {

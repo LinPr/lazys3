@@ -24,6 +24,7 @@ var claimedKeys = []struct {
 	{key: "backspace"},
 	{key: "left", spellings: []string{"←", "left"}},
 	{key: "p"},
+	{key: "m"},
 	// Selection
 	{key: "space"},
 	{key: "a"},

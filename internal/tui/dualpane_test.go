@@ -138,23 +138,13 @@ func TestDualPaneToggleAndAutoExit(t *testing.T) {
 }
 
 // TestTabSwitchesFocus pins that tab moves focus (border ownership) in
-// dual mode, closes an open preview, and is a swallowed no-op single-pane.
+// dual mode and is a swallowed no-op single-pane.
 func TestTabSwitchesFocus(t *testing.T) {
 	m, _ := dualModel(t, "a.txt")
 
-	// Preview open on the remote focus...
-	m = updateModel(t, m, keyPress('p'))
-	if !m.previewPanel.IsVisible() {
-		t.Fatal("'p' did not open the preview in dual mode")
-	}
-
-	// ...tab closes it and hands focus to the local pane.
 	m = updateModel(t, m, tabPress())
 	if m.paneFocus != focusLocal {
 		t.Fatal("tab did not focus the local pane")
-	}
-	if m.previewPanel.IsVisible() {
-		t.Fatal("tab did not close the preview before switching")
 	}
 	if !m.localList.Focused() || m.objectlist.Focused() {
 		t.Fatal("border focus flags do not match the local focus")
@@ -605,76 +595,6 @@ func TestDualPaneViewRendersBothPanes(t *testing.T) {
 	}
 	if w := lipgloss.Width(out); w != 100 {
 		t.Fatalf("single view width = %d, want 100", w)
-	}
-}
-
-// TestLocalPreviewSurvivesNonKeyMsgs pins that with the local pane focused
-// and the preview open, non-key messages (transfer ticks, status updates)
-// never re-feed the remote pane's highlighted item to the preview — which
-// would flip the panel's content and kick off a spurious remote fetch.
-func TestLocalPreviewSurvivesNonKeyMsgs(t *testing.T) {
-	m, _ := dualModel(t, "a.txt")
-	m.state = state.ActiveObjectList
-	m.selectedBucket = "bkt"
-	m.objectlist.SetObjects([]objectlist.Object{objectlist.NewDirObject("d1/")})
-
-	m = updateModel(t, m, tabPress())
-	m = updateModel(t, m, keyPress('p'))
-	if !m.previewPanel.IsVisible() {
-		t.Fatal("'p' did not open the preview with local focus")
-	}
-	// Local entry previews carry a Mode: line; object previews a Key: line.
-	if out := m.previewPanel.View(); !strings.Contains(out, "Mode:") {
-		t.Fatalf("preview does not show the local entry:\n%s", out)
-	}
-	for _, msg := range []tea.Msg{transferpanel.TickMsg{}, types.StatusUpdateMsg{Profile: "x"}} {
-		m = updateModel(t, m, msg)
-		if out := m.previewPanel.View(); strings.Contains(out, "Key:") || !strings.Contains(out, "Mode:") {
-			t.Fatalf("%T flipped the preview to the remote item:\n%s", msg, out)
-		}
-	}
-}
-
-// TestLocalLoadRefreshesPreview pins that committing a local directory
-// load retargets the open preview at the new listing's highlighted entry
-// without another key press.
-func TestLocalLoadRefreshesPreview(t *testing.T) {
-	m, _ := dualModel(t, "a.txt")
-	m = updateModel(t, m, tabPress())
-	m = updateModel(t, m, keyPress('p'))
-	if out := m.previewPanel.View(); !strings.Contains(out, "Size:") {
-		t.Fatalf("preview does not show the local file entry:\n%s", out)
-	}
-
-	dirB := t.TempDir()
-	if err := os.Mkdir(filepath.Join(dirB, "sub"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	m = updateModel(t, m, locallist.FetchDirCmd(dirB)())
-	if m.localList.Dir() != dirB {
-		t.Fatalf("local dir = %q, want %q", m.localList.Dir(), dirB)
-	}
-	if out := m.previewPanel.View(); !strings.Contains(out, "directory") {
-		t.Fatalf("preview did not follow the local load:\n%s", out)
-	}
-}
-
-// TestEnterDualPaneClosesPreview pins that 'l' with the single-pane
-// preview open closes it (matching exit/switch), so entering dual mode is
-// visible rather than rendering an identical half-width layout.
-func TestEnterDualPaneClosesPreview(t *testing.T) {
-	m := NewLazyS3Model()
-	m = updateModel(t, m, tea.WindowSizeMsg{Width: 100, Height: 30})
-	m = updateModel(t, m, keyPress('p'))
-	if !m.previewPanel.IsVisible() {
-		t.Fatal("'p' did not open the preview")
-	}
-	m = updateModel(t, m, keyPress('l'))
-	if !m.dualPane {
-		t.Fatal("'l' did not enter dual-pane mode")
-	}
-	if m.previewPanel.IsVisible() {
-		t.Fatal("entering dual-pane left the preview open")
 	}
 }
 

@@ -9,9 +9,6 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	tea "github.com/charmbracelet/bubbletea/v2"
-	"github.com/goccy/go-yaml"
-
-	"github.com/LinPr/lazys3/internal/tui/components/preview"
 )
 
 type Profile struct {
@@ -24,18 +21,20 @@ func (p Profile) Title() string       { return p.name }
 func (p Profile) Description() string { return p.EndpointURL }
 func (p Profile) FilterValue() string { return p.name }
 
-func (p Profile) GetPreviewContent() string {
-
-	y, _ := yaml.Marshal(p.config)
-	return string(y)
+// Region returns the profile's shared-config region ("" when unset); the
+// metadata overlay renders it.
+func (p Profile) Region() string {
+	if p.config == nil {
+		return ""
+	}
+	return p.config.Region
 }
 
-// GetPreviewRequest returns nil because profiles do not need a live S3
-// fetch — their preview content is the YAML dump from the shared config,
-// produced synchronously by GetPreviewContent. The preview component
-// checks for nil and skips the async fetch path.
-func (p Profile) GetPreviewRequest() *preview.PreviewRequest {
-	return nil
+// NewProfile constructs a profile entry with the given name and endpoint.
+// Parent-package tests use it to stage a listing without reading the shared
+// config (mirroring bucketlist.NewBucket).
+func NewProfile(name, endpointURL string) Profile {
+	return Profile{name: name, EndpointURL: endpointURL}
 }
 
 type ReadAwsConfigResult struct {

@@ -142,7 +142,7 @@ func (m *Model) SetGroups(groups []Group) { m.groups = groups }
 //   - Remote pane (S3):   file ops with the remote (bucket/object) list focused
 //   - Local pane:         the same op keys with the dual-pane local list focused
 //   - Selection & filter: marking, filtering and sorting the focused list
-//   - Overlays:           shared scroll and close keys of the ?/t/T/v overlays
+//   - Overlays:           shared scroll and close keys of the ?/t/T/v/p/m overlays
 //
 // Every key is documented in exactly one group, except the file-op keys
 // whose behaviour depends on pane focus (d/u/D/r/c/B/s/y): those appear
@@ -161,10 +161,11 @@ func DefaultBindings() []Group {
 				{Key: "x", Desc: "cancel the most recent running transfer (transfers overlay: the highlighted one)"},
 				{Key: "l", Desc: "toggle dual-pane layout (local ⇄ remote, needs ≥80 cols)"},
 				{Key: "tab", Desc: "switch focus between remote and local panes (dual-pane)"},
-				{Key: "p", Desc: "toggle preview panel (dual-pane: replaces the unfocused pane)"},
+				{Key: "p", Desc: "preview file content (floating overlay, first 256 KiB)"},
+				{Key: "m", Desc: "object/file metadata (floating overlay; buckets and profiles too)"},
 				{Key: "enter / →", Desc: "open selected (profile → buckets → objects)"},
 				{Key: "backspace / ←", Desc: "go back one level"},
-				{Key: "↑ / k, ↓ / j", Desc: "move the list cursor (also scrolls the ?/t/T/v overlays)"},
+				{Key: "↑ / k, ↓ / j", Desc: "move the list cursor (also scrolls the ?/t/T/v/p/m overlays)"},
 			},
 		},
 		{
@@ -210,7 +211,7 @@ func DefaultBindings() []Group {
 			Name: "Overlays",
 			Bindings: []Binding{
 				{Key: "pgup / pgdn", Desc: "scroll one page"},
-				{Key: "g / G", Desc: "jump to top / bottom (help and transfers overlays)"},
+				{Key: "g / G", Desc: "jump to top / bottom (help, transfers, preview, metadata)"},
 				{Key: "esc", Desc: "close the overlay (lists: clear filter; modal: cancel)"},
 			},
 		},

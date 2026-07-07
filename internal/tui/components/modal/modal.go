@@ -10,7 +10,7 @@
 //
 // While the modal is visible, the TUI's Update must dispatch key events to
 // the modal first (see handler.go): when m.modal.IsVisible(), forward the
-// msg to modal.Update and skip the list/preview dispatch.
+// msg to modal.Update and skip the list dispatch.
 package modal
 
 import (

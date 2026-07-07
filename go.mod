@@ -13,7 +13,6 @@ require (
 	github.com/charmbracelet/bubbletea/v2 v2.0.0-beta1
 	github.com/charmbracelet/lipgloss/v2 v2.0.0-beta.1
 	github.com/charmbracelet/x/ansi v0.8.0
-	github.com/goccy/go-yaml v1.18.0
 	github.com/igungor/gofakes3 v0.0.18
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/spf13/cobra v1.10.1

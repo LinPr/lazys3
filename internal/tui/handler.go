@@ -14,6 +14,7 @@ import (
 	s3store "github.com/LinPr/lazys3/internal/storage/s3"
 	"github.com/LinPr/lazys3/internal/tui/components/bucketlist"
 	"github.com/LinPr/lazys3/internal/tui/components/objectlist"
+	"github.com/LinPr/lazys3/internal/tui/components/profilelist"
 	"github.com/LinPr/lazys3/internal/tui/components/syncmodal"
 	"github.com/LinPr/lazys3/internal/tui/components/transferpanel"
 	"github.com/LinPr/lazys3/internal/tui/components/versionview"
@@ -643,7 +644,7 @@ func (m *Model) handleBucketStatus(msg versionview.BucketStatusMsg) tea.Cmd {
 	if msg.Err != nil {
 		return errCmd(fmt.Errorf("bucket versioning: %w", msg.Err))
 	}
-	if m.modal.IsVisible() || m.help.IsVisible() || m.historyView.IsVisible() || m.transferView.IsVisible() || m.versionView.IsVisible() {
+	if m.overlayActive() {
 		m.statusBar.SetInfo(fmt.Sprintf("bucket %s versioning: %s", msg.Bucket, versionview.StatusLabel(msg.Status)))
 		return nil
 	}
@@ -1025,21 +1026,23 @@ func (m *Model) initComponentsSize(msg tea.WindowSizeMsg) {
 		m.statusBar.SetInfo(fmt.Sprintf("dual-pane closed: terminal too narrow (needs ≥%d cols)", minDualPaneWidth))
 	}
 
-	// Lists and the preview panel are sized from the preview panel's
-	// visibility (half width when it is shown). All component sizes are
-	// outer dimensions — borders included — so lists + status bar stack to
-	// exactly the terminal height with no overflow.
+	// All component sizes are outer dimensions — borders included — so
+	// lists + status bar stack to exactly the terminal height with no
+	// overflow.
 	m.resizeLists()
 
 	// The status bar gets the remaining 1 row at the very bottom.
 	m.statusBar.SetSize(m.width, statusBarHeight)
 	m.modal.SetSize(m.width, m.height)
-	// The full-screen overlays (help, history, transfers, versions) use
-	// the whole canvas so they can lay themselves out over the screen.
+	// The full-screen overlays (help, history, transfers, versions) and
+	// the floating p/m overlays get the whole canvas so they can lay
+	// themselves out over the screen.
 	m.help.SetSize(m.width, m.height)
 	m.historyView.SetSize(m.width, m.height)
 	m.transferView.SetSize(m.width, m.height)
 	m.versionView.SetSize(m.width, m.height)
+	m.contentView.SetSize(m.width, m.height)
+	m.metaView.SetSize(m.width, m.height)
 }
 
 func (m *Model) handleProfileSelect() tea.Cmd {
@@ -1199,9 +1202,6 @@ func (m *Model) handleForward(_ tea.Msg) tea.Cmd {
 			m.state = state.ActiveBucketList
 		}
 
-		// close the preview panel (restoring list widths) on list switch
-		m.closePreview()
-
 	case state.ActiveBucketList:
 		// DATA-SAFETY guard: while a bucket-list refresh is in flight the
 		// visible listing is stale — a filter typed against it (e.g. for a
@@ -1222,8 +1222,6 @@ func (m *Model) handleForward(_ tea.Msg) tea.Cmd {
 			m.state = state.ActiveObjectList
 		}
 
-		m.closePreview()
-
 	case state.ActiveObjectList:
 		cmd := m.handleObjectSelect()
 		cmds = append(cmds, cmd)
@@ -1232,8 +1230,6 @@ func (m *Model) handleForward(_ tea.Msg) tea.Cmd {
 		if m.objectlist.GetSelectedObject() != nil {
 			m.state = state.ActiveObjectList
 		}
-
-		m.closePreview()
 	}
 
 	return tea.Batch(cmds...)
@@ -1241,10 +1237,6 @@ func (m *Model) handleForward(_ tea.Msg) tea.Cmd {
 
 func (m *Model) handleBackward() tea.Cmd {
 	var cmds []tea.Cmd
-
-	// A backward navigation switches (or reloads) the visible list; close
-	// the preview so a stale item preview never sits next to the new list.
-	m.closePreview()
 
 	switch m.state {
 	case state.ActiveObjectList:
@@ -1272,62 +1264,100 @@ func (m *Model) handleBackward() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-func (m *Model) handlePreviewToggle() {
-	m.previewPanel.Toggle()
-	m.resizeLists()
-}
-
-// resizeLists sizes all three lists from the current window size and the
-// preview panel's visibility: half width next to a visible preview, full
-// width otherwise. Sizing every list (not just the active one) keeps a
-// list switch from rendering a list whose width was set for the other
-// preview state. The list area always reserves room for the persistent
-// status bar at the bottom (transfers live in the 't' overlay, so the
-// lists own every other row). All sizes are outer dimensions; each
-// component subtracts its own border frame.
+// resizeLists sizes all three remote lists (and the dual-pane local list)
+// from the current window size: a 50/50 split in dual mode, full width
+// otherwise. Sizing every list (not just the active one) keeps a list
+// switch from rendering a stale-width list. The list area always reserves
+// room for the persistent status bar at the bottom (transfers live in the
+// 't' overlay, so the lists own every other row). All sizes are outer
+// dimensions; each component subtracts its own border frame.
 func (m *Model) resizeLists() {
 	listHeight := m.height - statusBarHeight
 	if listHeight < 4 {
 		listHeight = 4
 	}
 	if m.dualPane {
-		// Dual layout: remote pane left, local pane right. A visible
-		// preview takes the UNFOCUSED pane's exact slot (see View).
+		// Dual layout: remote pane left, local pane right.
 		lw := m.width / 2
 		rw := m.width - lw
 		m.profileList.SetSize(lw, listHeight)
 		m.bucketList.SetSize(lw, listHeight)
 		m.objectlist.SetSize(lw, listHeight)
 		m.localList.SetSize(rw, listHeight)
-		if m.previewPanel.IsVisible() {
-			if m.paneFocus == focusRemote {
-				m.previewPanel.SetSize(rw, listHeight)
-			} else {
-				m.previewPanel.SetSize(lw, listHeight)
-			}
-		}
 		return
 	}
-	w := m.width
-	if m.previewPanel.IsVisible() {
-		w = m.width / 2
-	}
-	m.profileList.SetSize(w, listHeight)
-	m.bucketList.SetSize(w, listHeight)
-	m.objectlist.SetSize(w, listHeight)
-	// The preview panel takes the columns left over next to a half-width
-	// list; its viewport clips content to this size.
-	m.previewPanel.SetSize(m.width-w, listHeight)
+	m.profileList.SetSize(m.width, listHeight)
+	m.bucketList.SetSize(m.width, listHeight)
+	m.objectlist.SetSize(m.width, listHeight)
 }
 
-// closePreview hides the preview panel (if visible) and restores the lists
-// to full width. Used on list switches so navigation never leaves a stale
-// preview next to a full-width list, or a half-width list next to a hidden
-// preview.
-func (m *Model) closePreview() {
-	if !m.previewPanel.IsVisible() {
-		return
+// previewHint is the status-bar nudge shown when 'p' is pressed on
+// something that has no byte content to preview.
+const previewHint = "preview works on files"
+
+// handleContentPreview ('p') opens the floating content-preview overlay
+// for the focused pane's highlighted file: a bounded local read with local
+// focus, a ranged GetObject on the object list otherwise. Directories,
+// empty listings and the profile/bucket lists surface a status-bar hint.
+func (m *Model) handleContentPreview() tea.Cmd {
+	if m.localFocused() {
+		e := m.localList.GetSelectedEntry()
+		if e == nil || e.IsDir() {
+			m.statusBar.SetInfo(previewHint)
+			return nil
+		}
+		return m.contentView.ShowLocal(e.Path())
 	}
-	m.previewPanel.Hide()
-	m.resizeLists()
+	if m.state != state.ActiveObjectList {
+		m.statusBar.SetInfo(previewHint + " — open a bucket first")
+		return nil
+	}
+	obj := m.objectlist.GetSelectedObject()
+	if obj == nil || obj.IsDir() {
+		m.statusBar.SetInfo(previewHint)
+		return nil
+	}
+	return m.contentView.ShowRemote(obj.GetPreviewRequest())
+}
+
+// handleMetadataOpen ('m') opens the floating metadata overlay for the
+// focused pane's highlighted item; every list state has a metadata source
+// (object/prefix, bucket, local entry, profile). Only an empty listing
+// surfaces a hint.
+func (m *Model) handleMetadataOpen() tea.Cmd {
+	if m.localFocused() {
+		e := m.localList.GetSelectedEntry()
+		if e == nil {
+			m.statusBar.SetInfo("nothing selected")
+			return nil
+		}
+		return m.metaView.ShowLocal(e.Path())
+	}
+	switch m.state {
+	case state.ActiveProfileList:
+		p := m.profileList.GetSelectedProfile()
+		if p == nil {
+			m.statusBar.SetInfo("nothing selected")
+			return nil
+		}
+		files := append([]string{}, profilelist.DefaultSharedConfigFiles...)
+		files = append(files, profilelist.DefaultSharedCredentialsFiles...)
+		m.metaView.ShowProfile(p.Title(), p.EndpointURL, p.Region(), files)
+		return nil
+	case state.ActiveBucketList:
+		b := m.bucketList.GetSelectedBucket()
+		if b == nil {
+			m.statusBar.SetInfo("nothing selected")
+			return nil
+		}
+		return m.metaView.ShowBucket(b.GetPreviewRequest())
+	case state.ActiveObjectList:
+		obj := m.objectlist.GetSelectedObject()
+		if obj == nil {
+			m.statusBar.SetInfo("nothing selected")
+			return nil
+		}
+		return m.metaView.ShowObject(obj.GetPreviewRequest(), obj.IsDir())
+	}
+	return nil
 }

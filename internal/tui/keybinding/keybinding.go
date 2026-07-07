@@ -1,8 +1,8 @@
 // Package keybinding holds global key bindings for the TUI.
 //
 // Keys already claimed by the global dispatcher (tui.go): q, ctrl+c,
-// enter, right, backspace, left, p, t, T, ?, space, a, d, u, D, r, c, B,
-// s, x, y, Y, v, V, l, tab.
+// enter, right, backspace, left, p, m, t, T, ?, space, a, d, u, D, r, c,
+// B, s, x, y, Y, v, V, l, tab.
 // The object-list component additionally claims the keys below; they are
 // exported so the help overlay and the component reference one source of
 // truth.
@@ -56,6 +56,16 @@ const (
 	// HistoryToggle (shift+t) opens/closes the persistent transfer-history
 	// overlay (global, handled in tui.go).
 	HistoryToggle = "T"
+
+	// ContentPreview opens/closes the floating content-preview overlay
+	// (first 256 KiB of the highlighted file, remote or local; global,
+	// handled in tui.go).
+	ContentPreview = "p"
+
+	// Metadata opens/closes the floating metadata overlay for the
+	// highlighted item (object/bucket/local entry/profile; global,
+	// handled in tui.go).
+	Metadata = "m"
 
 	// VersionsToggle opens/closes the object-versions overlay for the
 	// highlighted file (global, handled in tui.go).

@@ -10,11 +10,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/LinPr/lazys3/internal/strutil"
-	"github.com/LinPr/lazys3/internal/tui/components/preview"
 	tea "github.com/charmbracelet/bubbletea/v2"
 )
 
@@ -26,7 +24,6 @@ type Entry struct {
 	path    string
 	size    int64
 	modTime time.Time
-	mode    fs.FileMode // kept for the preview metadata block
 	isDir   bool
 	// isSymlink records the link itself (isDir/size/modTime describe the
 	// stat'ed target): deleting one only unlinks it, and the local-delete
@@ -61,34 +58,6 @@ func (e Entry) Description() string {
 }
 
 func (e Entry) FilterValue() string { return e.name }
-
-// PreviewKey gives the preview panel a path-unique identity: FilterValue
-// is the base name only, which collides across directories (and with
-// same-named profiles) and would leave a stale preview memo.
-func (e Entry) PreviewKey() string { return e.path }
-
-// GetPreviewContent returns the metadata block shown by the preview
-// panel. Local entries always use the preview's synchronous path.
-func (e Entry) GetPreviewContent() string {
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "Path:      %s\n", e.path)
-	if e.isDir {
-		sb.WriteString("Type:      directory\n")
-	} else {
-		fmt.Fprintf(&sb, "Size:      %s\n", strutil.HumanizeBytes(e.size))
-	}
-	if !e.modTime.IsZero() {
-		fmt.Fprintf(&sb, "Modified:  %s\n", e.modTime.Format(time.RFC3339))
-	}
-	if e.mode != 0 {
-		fmt.Fprintf(&sb, "Mode:      %s\n", e.mode.String())
-	}
-	return sb.String()
-}
-
-// GetPreviewRequest always returns nil: there is no async fetch for
-// local files in v1, so the preview falls back to GetPreviewContent.
-func (e Entry) GetPreviewRequest() *preview.PreviewRequest { return nil }
 
 // LoadedMsg is the result of FetchDirCmd. Dir echoes the directory that
 // was read so the Model only commits a navigation on success. Gen carries
@@ -130,7 +99,6 @@ func FetchDirCmd(dir string) tea.Cmd {
 			e := Entry{name: de.Name(), path: p, isSymlink: isLink}
 			if info != nil {
 				e.isDir = info.IsDir()
-				e.mode = info.Mode()
 				e.modTime = info.ModTime()
 				if !e.isDir {
 					e.size = info.Size()

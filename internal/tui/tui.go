@@ -21,6 +21,7 @@ import (
 	"github.com/LinPr/lazys3/internal/tui/components/help"
 	"github.com/LinPr/lazys3/internal/tui/components/historyview"
 	"github.com/LinPr/lazys3/internal/tui/components/locallist"
+	"github.com/LinPr/lazys3/internal/tui/components/metaview"
 	"github.com/LinPr/lazys3/internal/tui/components/modal"
 	"github.com/LinPr/lazys3/internal/tui/components/objectlist"
 	"github.com/LinPr/lazys3/internal/tui/components/preview"
@@ -46,7 +47,8 @@ type Model struct {
 	profileList     profilelist.Model
 	bucketList      bucketlist.Model
 	objectlist      objectlist.Model
-	previewPanel    preview.Model
+	contentView     preview.Model
+	metaView        metaview.Model
 	transferPanel   transferpanel.Model
 	modal           modal.Model
 	statusBar       statusbar.Model
@@ -108,7 +110,8 @@ func NewLazyS3ModelWithConfig(cfg config.Config) Model {
 		profileList:   profilelist.NewModel(),
 		bucketList:    bucketlist.NewModel(),
 		objectlist:    objectList,
-		previewPanel:  preview.NewPreviewModel(),
+		contentView:   preview.NewModel(),
+		metaView:      metaview.NewModel(),
 		transferPanel: transferpanel.NewModel(),
 		modal:         modal.NewModel(),
 		statusBar:     statusbar.NewModel(),
@@ -127,6 +130,8 @@ func (m Model) Init() tea.Cmd {
 		m.profileList.Init(),
 		m.bucketList.Init(),
 		m.objectlist.Init(),
+		m.contentView.Init(),
+		m.metaView.Init(),
 		m.transferPanel.Init(),
 		m.modal.Init(),
 		m.statusBar.Init(),
@@ -165,7 +170,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		// Modal takes over key dispatch when visible: forward to the
-		// modal and skip list/preview dispatch entirely. The modal's
+		// modal and skip list dispatch entirely. The modal's
 		// onConfirm callback returns the tea.Cmd that starts the op.
 		if m.modal.IsVisible() {
 			newModal, cmd := m.modal.Update(msg)
@@ -250,6 +255,35 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.emitStatusUpdate())
 			return m, tea.Batch(cmds...)
 		}
+		// Content-preview overlay ('p', floating): p/esc closes it (dropping
+		// any in-flight fetch), j/k/pgup/pgdown/g/G scroll the sample, and
+		// every other key is swallowed so global hotkeys never fire behind
+		// the overlay. Slotted after the versions overlay in the precedence
+		// chain (ctrl+c > modal > help > history > transfers > versions >
+		// preview > metadata); the full-screen overlays swallow 'p'/'m'
+		// while visible, so the floating pair can never stack on them.
+		if m.contentView.IsVisible() {
+			key := keybinding.KeyString(msg.String())
+			if key == keybinding.ContentPreview || msg.String() == "esc" {
+				m.contentView.Hide()
+			} else {
+				m.contentView.HandleKey(key)
+			}
+			cmds = append(cmds, m.emitStatusUpdate())
+			return m, tea.Batch(cmds...)
+		}
+		// Metadata overlay ('m', floating): same routing as the content
+		// preview — m/esc closes, scroll keys move, the rest is swallowed.
+		if m.metaView.IsVisible() {
+			key := keybinding.KeyString(msg.String())
+			if key == keybinding.Metadata || msg.String() == "esc" {
+				m.metaView.Hide()
+			} else {
+				m.metaView.HandleKey(key)
+			}
+			cmds = append(cmds, m.emitStatusUpdate())
+			return m, tea.Batch(cmds...)
+		}
 		// While a list's filter input is focused, every key belongs to
 		// the list (the user is typing a pattern): skip the global hotkey
 		// switch and let the state dispatch below forward the key to the
@@ -306,11 +340,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, m.handleBackward(), m.emitStatusUpdate())
 				return m, tea.Batch(cmds...)
 
-			case "p":
-				m.handlePreviewToggle()
-				// Kick off the fetch for the highlighted item when the
-				// preview just opened (SetContent skips hidden panels).
-				cmds = append(cmds, m.previewCmdForSelection(), m.emitStatusUpdate())
+			// p opens the floating content-preview overlay for the focused
+			// pane's highlighted FILE (first 256 KiB, remote or local);
+			// directories and non-file lists get a status-bar hint. Closing
+			// is handled in the contentView.IsVisible branch above.
+			case keybinding.ContentPreview:
+				if cmd := m.handleContentPreview(); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+				cmds = append(cmds, m.emitStatusUpdate())
+				return m, tea.Batch(cmds...)
+
+			// m opens the floating metadata overlay for the focused pane's
+			// highlighted item: HeadObject fields for objects, the live
+			// region/versioning probes for buckets, lstat facts for local
+			// entries, the shared-config facts for profiles. Closing is
+			// handled in the metaView.IsVisible branch above.
+			case keybinding.Metadata:
+				if cmd := m.handleMetadataOpen(); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+				cmds = append(cmds, m.emitStatusUpdate())
 				return m, tea.Batch(cmds...)
 
 			// t opens the live transfers overlay (closing is handled in
@@ -382,11 +432,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					newLocal, cmd := m.localList.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyDown}))
 					m.localList = newLocal
 					cmds = append(cmds, cmd)
-					if e := m.localList.GetSelectedEntry(); e != nil {
-						if pc := m.previewPanel.SetContent(e); pc != nil {
-							cmds = append(cmds, pc)
-						}
-					}
 					cmds = append(cmds, m.emitStatusUpdate())
 					return m, tea.Batch(cmds...)
 				}
@@ -397,12 +442,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					newList, cmd := m.objectlist.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyDown}))
 					m.objectlist = newList
 					cmds = append(cmds, cmd)
-					// Refresh the preview for the newly-highlighted row.
-					if obj := m.objectlist.GetSelectedObject(); obj != nil {
-						if pc := m.previewPanel.SetContent(obj); pc != nil {
-							cmds = append(cmds, pc)
-						}
-					}
 				}
 				cmds = append(cmds, m.emitStatusUpdate())
 				return m, tea.Batch(cmds...)
@@ -446,12 +485,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Forward live-preview fetch results to the preview panel. This must
-	// happen outside the state switch below so the preview panel receives
-	// PreviewContentMsg even when the active list is a different component.
-	if _, ok := msg.(preview.PreviewContentMsg); ok {
-		newPreviewModel, cmd := m.previewPanel.Update(msg)
-		m.previewPanel = newPreviewModel.(preview.Model)
+	// Forward overlay fetch results by TYPE (never by active state): the
+	// content sample / metadata rows must reach their overlay no matter
+	// which list is active. Each overlay drops stale messages via its seq.
+	switch msg.(type) {
+	case preview.ContentMsg:
+		newCV, cmd := m.contentView.Update(msg)
+		m.contentView = newCV
+		cmds = append(cmds, cmd)
+	case metaview.LoadedMsg:
+		newMV, cmd := m.metaView.Update(msg)
+		m.metaView = newMV
 		cmds = append(cmds, cmd)
 	}
 
@@ -539,14 +583,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					cmds = append(cmds, cmd)
 				}
 			}
-			// A versioning toggle changes the bucket preview's Versioning
-			// line; invalidate the memo so the same selection re-fetches.
-			if tmsg.Op == transferpanel.OpVersioning {
-				m.previewPanel.Invalidate()
-				if pc := m.previewCmdForSelection(); pc != nil {
-					cmds = append(cmds, pc)
-				}
-			}
 		}
 	case versionview.LoadedMsg:
 		newVV, cmd := m.versionView.Update(tmsg)
@@ -596,17 +632,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case locallist.LoadedMsg:
 		// Local directory fetch results are routed by type (never by
 		// focus): the pane commits the navigation on success and keeps
-		// the previous listing (surfacing an ErrMsg) on failure. When
-		// the local pane is focused, retarget the preview at the newly
-		// loaded directory's highlighted entry.
+		// the previous listing (surfacing an ErrMsg) on failure.
 		newLocal, cmd := m.localList.Update(tmsg)
 		m.localList = newLocal
 		cmds = append(cmds, cmd)
-		if m.localFocused() {
-			if pc := m.previewCmdForSelection(); pc != nil {
-				cmds = append(cmds, pc)
-			}
-		}
 	case types.SyncPollMsg:
 		// syncmodal.PollCmd snapshots the sync's shared progress state
 		// into the message. Forward it to the panel and re-arm the
@@ -649,7 +678,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// half-typed input would be silently discarded, and a modal opened
 		// behind a full-screen overlay would swallow keys invisibly): fall
 		// back to a status-bar note — the URL is on the clipboard either way.
-		if m.modal.IsVisible() || m.help.IsVisible() || m.historyView.IsVisible() || m.transferView.IsVisible() || m.versionView.IsVisible() {
+		// The floating p/m overlays count too: a modal popping over the text
+		// the user is reading would steal its keys mid-scroll.
+		if m.overlayActive() {
 			note := fmt.Sprintf("presigned URL for %s copied to clipboard (valid %s)", path.Base(tmsg.Key), tmsg.Expiry)
 			if insecure {
 				note += " — plain HTTP"
@@ -681,8 +712,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// dispatch message to the active component. Key presses belong to the
 	// focused pane: with the local pane focused they go to the local list
-	// (plus a preview refresh from its highlighted entry) instead of the
-	// remote state switch. Non-key messages keep their existing routes,
+	// instead of the remote state switch. Non-key messages keep their
+	// existing routes,
 	// with one exception: bubbles' filtering is asynchronous — typing in
 	// the filter input returns a tea.Cmd whose list.FilterMatchesMsg must
 	// be fed back into the SAME list to actually narrow it. That message
@@ -695,54 +726,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if (isKey || isFilterMatches) && m.localFocused() {
 		newLocal, cmd := m.localList.Update(msg)
 		m.localList = newLocal
-		cmds = append(cmds, cmd)
-		if e := m.localList.GetSelectedEntry(); e != nil {
-			if pc := m.previewPanel.SetContent(e); pc != nil {
-				cmds = append(cmds, pc)
-			}
-		}
-		cmds = append(cmds, m.emitStatusUpdate())
+		cmds = append(cmds, cmd, m.emitStatusUpdate())
 		return m, tea.Batch(cmds...)
 	}
-	// The preview follows the FOCUSED pane's highlight: with the local
-	// pane focused, non-key messages must not re-feed the remote list's
-	// item to the preview (a transfer tick would flip the panel to the
-	// remote item and dispatch its live S3 fetch).
-	feedPreview := !m.localFocused()
 	switch m.state {
 	case state.ActiveProfileList:
 		newProfileListModel, cmd := m.profileList.Update(msg)
 		m.profileList = newProfileListModel
-		profileItem := m.profileList.GetSelectedProfile()
-		if profileItem != nil && feedPreview {
-			if cmd := m.previewPanel.SetContent(profileItem); cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-		}
 		cmds = append(cmds, cmd)
 
 	case state.ActiveBucketList:
 		newBucketListModel, cmd := m.bucketList.Update(msg)
 		m.bucketList = newBucketListModel
-
-		bucketItem := m.bucketList.GetSelectedBucket()
-		if bucketItem != nil && feedPreview {
-			if cmd := m.previewPanel.SetContent(bucketItem); cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-		}
 		cmds = append(cmds, cmd)
 
 	case state.ActiveObjectList:
 		newObjectListModel, cmd := m.objectlist.Update(msg)
 		m.objectlist = newObjectListModel
-
-		objectItem := m.objectlist.GetSelectedObject()
-		if objectItem != nil && feedPreview {
-			if cmd := m.previewPanel.SetContent(objectItem); cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-		}
 		cmds = append(cmds, cmd)
 
 	default:
@@ -924,35 +924,19 @@ func (m Model) filtering() bool {
 	return false
 }
 
-// previewCmdForSelection feeds the active list's highlighted item to the
-// preview panel and returns the live-fetch cmd (nil when nothing is
-// selected or the item is unchanged).
-func (m *Model) previewCmdForSelection() tea.Cmd {
-	if m.localFocused() {
-		if e := m.localList.GetSelectedEntry(); e != nil {
-			return m.previewPanel.SetContent(e)
-		}
-		return nil
-	}
-	switch m.state {
-	case state.ActiveProfileList:
-		if it := m.profileList.GetSelectedProfile(); it != nil {
-			return m.previewPanel.SetContent(it)
-		}
-	case state.ActiveBucketList:
-		if it := m.bucketList.GetSelectedBucket(); it != nil {
-			return m.previewPanel.SetContent(it)
-		}
-	case state.ActiveObjectList:
-		if it := m.objectlist.GetSelectedObject(); it != nil {
-			return m.previewPanel.SetContent(it)
-		}
-	}
-	return nil
+// overlayActive reports whether any key-swallowing surface (modal or
+// overlay) is up. Async results that would open a modal (presign, the
+// versioning-status probe) fall back to a status-bar note while one is
+// active, so they never clobber a live modal or steal keys from an overlay
+// the user is reading.
+func (m Model) overlayActive() bool {
+	return m.modal.IsVisible() || m.help.IsVisible() || m.historyView.IsVisible() ||
+		m.transferView.IsVisible() || m.versionView.IsVisible() ||
+		m.contentView.IsVisible() || m.metaView.IsVisible()
 }
 
-// remotePaneView renders the active remote list (without the preview);
-// used by the dual-pane composition.
+// remotePaneView renders the active remote list; the single-pane layout
+// and the dual-pane left column both build on it.
 func (m Model) remotePaneView() string {
 	switch m.state {
 	case state.ActiveProfileList:
@@ -966,50 +950,13 @@ func (m Model) remotePaneView() string {
 }
 
 func (m Model) View() string {
-	var mainContent string
 	if m.dualPane {
-		// Dual layout: remote pane left, local pane right. A visible
-		// preview replaces the UNFOCUSED pane, keeping a stable 2-column
-		// layout with the focused pane's width and cursor intact.
-		left := m.remotePaneView()
-		right := m.localList.View()
-		if m.previewPanel.IsVisible() {
-			if m.paneFocus == focusRemote {
-				right = m.previewPanel.View()
-			} else {
-				left = m.previewPanel.View()
-			}
-		}
-		mainContent = lipgloss.JoinHorizontal(lipgloss.Top, left, right)
-		return m.composeView(mainContent)
+		// Dual layout: remote pane left, local pane right.
+		return m.composeView(lipgloss.JoinHorizontal(lipgloss.Top,
+			m.remotePaneView(), m.localList.View()))
 	}
-	switch m.state {
-	case state.ActiveProfileList:
-		mainContent = lipgloss.JoinHorizontal(
-			lipgloss.Top,
-			m.profileList.View(),
-			m.previewPanel.View(),
-		)
-
-	case state.ActiveBucketList:
-		mainContent = lipgloss.JoinHorizontal(
-			lipgloss.Top,
-			m.bucketList.View(),
-			m.previewPanel.View(),
-		)
-
-	case state.ActiveObjectList:
-		mainContent = lipgloss.JoinHorizontal(
-			lipgloss.Top,
-			m.objectlist.View(),
-			m.previewPanel.View(),
-		)
-
-	default:
-		mainContent = style.ErrorStyle.Render("Unknown component")
-	}
-
-	return m.composeView(mainContent)
+	// Single-pane layout: the active list owns the full width.
+	return m.composeView(m.remotePaneView())
 }
 
 // composeView stacks the main content above the status bar, then applies
@@ -1046,15 +993,30 @@ func (m Model) composeView(mainContent string) string {
 	} else if m.versionView.IsVisible() {
 		layout = m.versionView.View()
 	}
+	// The content-preview ('p') and metadata ('m') overlays are floating
+	// boxes composited centered over the live layout, like the modal but
+	// larger. They are mutually exclusive (each swallows the other's key
+	// while visible) and can never stack on the full-screen overlays above
+	// (which swallow p/m too).
+	if m.contentView.IsVisible() {
+		layout = placeCentered(layout, m.contentView.View(), m.width, m.height)
+	} else if m.metaView.IsVisible() {
+		layout = placeCentered(layout, m.metaView.View(), m.width, m.height)
+	}
 	// The modal is a floating box composited centered ON TOP of the live
 	// layout, so the panes and status bar stay visible around it; closing
 	// it just removes the box, revealing the untouched layout.
 	if m.modal.IsVisible() {
-		box := m.modal.View()
-		x := (m.width - lipgloss.Width(box)) / 2
-		y := (m.height - lipgloss.Height(box)) / 2
-		layout = style.PlaceOverlay(layout, box, x, y)
+		layout = placeCentered(layout, m.modal.View(), m.width, m.height)
 	}
 
 	return layout
+}
+
+// placeCentered composites the floating box over the layout, centered on
+// the w×h canvas (ANSI-aware and CJK-safe; see style.PlaceOverlay).
+func placeCentered(layout, box string, w, h int) string {
+	x := (w - lipgloss.Width(box)) / 2
+	y := (h - lipgloss.Height(box)) / 2
+	return style.PlaceOverlay(layout, box, x, y)
 }

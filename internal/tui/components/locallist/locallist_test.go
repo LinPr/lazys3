@@ -48,6 +48,32 @@ func drain(m Model, cmd tea.Cmd) Model {
 	return m
 }
 
+// pressSort feeds a sort key press and returns the model plus the status
+// bar note (types.InfoMsg) the key emitted, draining filter refreshes
+// like press does.
+func pressSort(m Model, k tea.Key) (Model, string) {
+	newModel, cmd := m.Update(tea.KeyPressMsg(k))
+	note := ""
+	var walk func(tea.Cmd)
+	walk = func(c tea.Cmd) {
+		if c == nil {
+			return
+		}
+		switch msg := c().(type) {
+		case tea.BatchMsg:
+			for _, sub := range msg {
+				walk(sub)
+			}
+		case types.InfoMsg:
+			note = msg.Text
+		case list.FilterMatchesMsg:
+			newModel, _ = newModel.Update(msg)
+		}
+	}
+	walk(cmd)
+	return newModel, note
+}
+
 func visibleNames(m Model) []string {
 	var names []string
 	for _, it := range m.list.VisibleItems() {
@@ -115,26 +141,33 @@ func TestCycleSortFieldAndDirection(t *testing.T) {
 	m.SetSize(80, 20)
 	m = load(t, m, sampleDir(t))
 
-	// o -> size ascending, dirs still first.
-	m = press(m, tea.Key{Code: 'o', Text: "o"})
+	// o -> size ascending, dirs still first. The sort mode is announced
+	// as a status-bar note, never in the title.
+	m, note := pressSort(m, tea.Key{Code: 'o', Text: "o"})
 	mustEqual(t, visibleNames(m),
 		[]string{"data/", "logs/", "zeta.txt", "mid.txt", "Alpha.txt"})
-	if !strings.Contains(m.list.Title, "size ↑") {
-		t.Errorf("title should show 'size ↑', got %q", m.list.Title)
+	if note != "sort: size ↑" {
+		t.Errorf("'o' note = %q, want 'sort: size ↑'", note)
+	}
+	if strings.Contains(m.list.Title, "size") || strings.Contains(m.list.Title, "[") {
+		t.Errorf("title must not carry a sort suffix, got %q", m.list.Title)
 	}
 
 	// O -> size descending, dirs still on top.
-	m = press(m, tea.Key{Code: 'O', Text: "O"})
+	m, note = pressSort(m, tea.Key{Code: 'O', Text: "O"})
 	mustEqual(t, visibleNames(m),
 		[]string{"logs/", "data/", "Alpha.txt", "mid.txt", "zeta.txt"})
-	if !strings.Contains(m.list.Title, "size ↓") {
-		t.Errorf("title should show 'size ↓', got %q", m.list.Title)
+	if note != "sort: size ↓" {
+		t.Errorf("'O' note = %q, want 'sort: size ↓'", note)
 	}
 
 	// o -> time descending (direction persists across field change).
-	m = press(m, tea.Key{Code: 'o', Text: "o"})
+	m, note = pressSort(m, tea.Key{Code: 'o', Text: "o"})
 	mustEqual(t, visibleNames(m),
 		[]string{"logs/", "data/", "zeta.txt", "mid.txt", "Alpha.txt"})
+	if note != "sort: time ↓" {
+		t.Errorf("second 'o' note = %q, want 'sort: time ↓'", note)
+	}
 }
 
 func TestFilterNarrowsAndExposesState(t *testing.T) {
@@ -597,8 +630,13 @@ func TestTitleFitsNarrowPane(t *testing.T) {
 			t.Errorf("line %d is %d cells wide, exceeds 40:\n%q", i, w, ansi.Strip(line))
 		}
 	}
-	// Middle truncation keeps the path tail and the sort suffix readable.
-	if out := ansi.Strip(m.View()); !strings.Contains(out, "↑]") {
-		t.Errorf("truncated title lost the sort suffix:\n%s", out)
+	// Middle truncation keeps an ellipsis and never smuggles a sort
+	// suffix back in.
+	out := ansi.Strip(m.View())
+	if !strings.Contains(out, "…") {
+		t.Errorf("deep path title was not truncated:\n%s", out)
+	}
+	if strings.Contains(out, "↑]") || strings.Contains(out, "↓]") {
+		t.Errorf("title carries a sort suffix again:\n%s", out)
 	}
 }

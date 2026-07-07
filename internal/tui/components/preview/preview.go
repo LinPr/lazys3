@@ -3,7 +3,7 @@
 // tui.go) showing the FIRST 256 KiB of the highlighted file — a ranged
 // GetObject for remote objects, a bounded read for local files. Valid UTF-8
 // renders as scrollable hard-wrapped text; binary samples show a size note
-// instead. The overlay follows the historyview pattern: the TUI opens it on
+// instead. The overlay follows the versionview pattern: the TUI opens it on
 // 'p', swallows every other key while it is visible (except ctrl+c), scrolls
 // it with j/k/pgup/pgdown/g/G, and closes it on esc/'p'.
 package preview

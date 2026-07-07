@@ -141,7 +141,8 @@ func metaColumns(o Object, showSize, showMtime, showClass bool) string {
 	if showMtime {
 		mtime := ""
 		if !o.isDir && !o.modTime.IsZero() {
-			mtime = o.modTime.Format("2006-01-02 15:04")
+			// SDK LastModified is UTC; render the user's wall clock.
+			mtime = strutil.LocalTime(o.modTime)
 		}
 		pad(mtime, mtimeWidth, false)
 	}

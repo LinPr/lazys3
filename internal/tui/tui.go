@@ -16,10 +16,8 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/LinPr/lazys3/internal/config"
-	"github.com/LinPr/lazys3/internal/history"
 	"github.com/LinPr/lazys3/internal/tui/components/bucketlist"
 	"github.com/LinPr/lazys3/internal/tui/components/help"
-	"github.com/LinPr/lazys3/internal/tui/components/historyview"
 	"github.com/LinPr/lazys3/internal/tui/components/locallist"
 	"github.com/LinPr/lazys3/internal/tui/components/metaview"
 	"github.com/LinPr/lazys3/internal/tui/components/modal"
@@ -53,10 +51,8 @@ type Model struct {
 	modal         modal.Model
 	statusBar     statusbar.Model
 	help          help.Model
-	historyView   historyview.Model
 	transferView  transferview.Model
 	versionView   versionview.Model
-	historyStore  *history.Store
 	// awsFiles are the resolved AWS shared config/credentials paths
 	// (--aws-config/--aws-credentials > env > ~/.aws default), threaded
 	// into every S3 option so ops target the same files as the listings.
@@ -135,10 +131,8 @@ func NewLazyS3ModelWithConfig(cfg config.Config, awsFiles config.AWSFiles) Model
 		modal:         modal.NewModel(),
 		statusBar:     statusbar.NewModel(),
 		help:          help.NewModel(),
-		historyView:   historyview.NewModel(),
 		transferView:  transferview.NewModel(),
 		versionView:   versionview.NewModel(),
-		historyStore:  history.NewStore(history.DefaultPath()),
 		localList:     localList,
 	}
 }
@@ -161,7 +155,6 @@ func (m Model) Init() tea.Cmd {
 		m.modal.Init(),
 		m.statusBar.Init(),
 		m.help.Init(),
-		m.historyView.Init(),
 		m.transferView.Init(),
 		m.versionView.Init(),
 		m.localList.Init(),
@@ -194,6 +187,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cancelAllOnQuit()
 			return m, tea.Quit
 		}
+		// Any key press dismisses a lingering status-bar error — including
+		// a key an overlay or modal below is about to swallow — so a
+		// failure never outstays the user's next action. Async (non-key)
+		// messages leave the error visible until the user acts.
+		m.statusBar.SetError("")
 		// Modal takes over key dispatch when visible: forward to the
 		// modal and skip list dispatch entirely. The modal's
 		// onConfirm callback returns the tea.Cmd that starts the op.
@@ -215,18 +213,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Fold "shift+g" -> "G" so the jump-to-bottom key works
 				// on every terminal (see keybinding.KeyString).
 				m.help.HandleKey(keybinding.KeyString(msg.String()))
-			}
-			cmds = append(cmds, m.emitStatusUpdate())
-			return m, tea.Batch(cmds...)
-		}
-		// History overlay mirrors the help overlay: 'T'/esc closes it,
-		// j/k/pgup/pgdown scroll, everything else is swallowed so reading
-		// the history can't trigger a file op.
-		if m.historyView.IsVisible() {
-			if keybinding.KeyString(msg.String()) == keybinding.HistoryToggle || msg.String() == "esc" {
-				m.historyView.Hide()
-			} else {
-				m.historyView.HandleKey(msg.String())
 			}
 			cmds = append(cmds, m.emitStatusUpdate())
 			return m, tea.Batch(cmds...)
@@ -284,7 +270,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// any in-flight fetch), j/k/pgup/pgdown/g/G scroll the sample, and
 		// every other key is swallowed so global hotkeys never fire behind
 		// the overlay. Slotted after the versions overlay in the precedence
-		// chain (ctrl+c > modal > help > history > transfers > versions >
+		// chain (ctrl+c > modal > help > transfers > versions >
 		// preview > metadata); the full-screen overlays swallow 'p'/'m'
 		// while visible, so the floating pair can never stack on them.
 		if m.contentView.IsVisible() {
@@ -394,6 +380,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.transferView.Show()
 				return m, m.emitStatusUpdate()
 
+			// g opens the go-to-path modal for the focused pane (goto.go).
+			// List contexts only: the overlay branches above swallow 'g'
+			// first, so it keeps its jump-to-top meaning inside them, and
+			// the filtering() guard keeps it typeable in filter inputs.
+			case keybinding.Goto:
+				if cmd := m.handleGotoKey(); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+				cmds = append(cmds, m.emitStatusUpdate())
+				return m, tea.Batch(cmds...)
+
 			// x cancels the most recent running transfer (its context is
 			// cancelled; the op returns context.Canceled and the row renders
 			// as "canceled").
@@ -408,14 +405,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "?":
 				m.help.Toggle()
 				return m, m.emitStatusUpdate()
-
-			// T opens the persistent transfer-history overlay. The records
-			// are re-read from the state file on every open (via a tea.Cmd,
-			// so the read never blocks Update); closing is handled in the
-			// historyView.IsVisible branch above.
-			case keybinding.HistoryToggle:
-				m.historyView.Show()
-				return m, tea.Batch(historyview.LoadCmd(m.historyStore), m.emitStatusUpdate())
 
 			// v opens the object-versions overlay for the highlighted file
 			// (object list only; directories error on the status bar).
@@ -448,25 +437,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// We handle this here (before forwarding to the list) because
 			// the bubbles list does not treat space as a selection toggle
 			// by default. bubbletea v2 stringifies the key as "space"; the
-			// legacy " " spelling is kept for compatibility. After
-			// toggling, we move the cursor down so the user can mark
-			// several items in a row (the standard mc/nnn UX).
+			// legacy " " spelling is kept for compatibility. The cursor
+			// stays put — toggling (select or deselect) never moves it.
 			case " ", "space":
 				if m.localFocused() {
 					m.localList.ToggleSelected()
-					newLocal, cmd := m.localList.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyDown}))
-					m.localList = newLocal
-					cmds = append(cmds, cmd)
 					cmds = append(cmds, m.emitStatusUpdate())
 					return m, tea.Batch(cmds...)
 				}
 				if m.state == state.ActiveObjectList {
 					m.objectlist.ToggleSelected()
-					// Synthesise a down-arrow and forward it to the list
-					// so the cursor advances after the toggle.
-					newList, cmd := m.objectlist.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyDown}))
-					m.objectlist = newList
-					cmds = append(cmds, cmd)
 				}
 				cmds = append(cmds, m.emitStatusUpdate())
 				return m, tea.Batch(cmds...)
@@ -541,13 +521,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		newTP, cmd := m.transferPanel.Update(tmsg)
 		m.transferPanel = newTP
 		cmds = append(cmds, cmd)
-		// The row just turned terminal: snapshot it (final status, bytes,
-		// FinishedAt, note) and append it to the persistent history file.
-		// The record is built here on the Update goroutine (cheap) but the
-		// file IO runs inside the returned tea.Cmd.
-		if hcmd := m.appendHistoryCmd(tmsg); hcmd != nil {
-			cmds = append(cmds, hcmd)
-		}
 		switch {
 		case errors.Is(tmsg.Err, context.Canceled):
 			// User-cancelled: the row already renders "canceled"; no
@@ -624,10 +597,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd := m.handleBucketStatus(tmsg); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
-	case historyview.LoadedMsg:
-		newHV, cmd := m.historyView.Update(tmsg)
-		m.historyView = newHV
-		cmds = append(cmds, cmd)
 	case bucketlist.FetchBucketListResultMsg:
 		// Routed by TYPE, not by active state: the result of a delayed
 		// refresh (e.g. the re-fetch after make-bucket) can land after the
@@ -684,6 +653,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Chained modal flows (sync src → dst → flags) reopen the next
 		// modal message-style so it lands on the live model.
 		m.modal.Show(tmsg.Title, tmsg.Placeholder, tmsg.OnConfirm)
+	case gotoRemoteMsg:
+		// The goto confirm is routed message-style so the parse and the
+		// navigation run on the live model, never the modal's stale capture.
+		if cmd := m.handleGotoRemote(tmsg.input); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case gotoLocalMsg:
+		if cmd := m.handleGotoLocal(tmsg.path); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case objectlist.PresignDoneMsg:
 		// Presign is instant (no transfer row): failures land on the
 		// status bar; a success shows the URL in a confirm modal (the
@@ -698,8 +677,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, tea.SetClipboard(tmsg.URL))
 		insecure := strings.HasPrefix(tmsg.URL, "http://")
 		// PresignCmd is async (credential resolution can take seconds), so
-		// the result can land while another modal, the help overlay, or the
-		// history overlay is open. Never clobber those (a pending confirm or
+		// the result can land while another modal or a full-screen overlay
+		// is open. Never clobber those (a pending confirm or
 		// half-typed input would be silently discarded, and a modal opened
 		// behind a full-screen overlay would swallow keys invisibly): fall
 		// back to a status-bar note — the URL is on the clipboard either way.
@@ -733,6 +712,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case types.StatusUpdateMsg:
 		newBar, _ := m.statusBar.Update(tmsg)
 		m.statusBar = newBar
+	case types.InfoMsg:
+		// Transient note emitted by a component cmd (e.g. the o/O sort
+		// keys); dismissed by the next navigation-ish change as usual.
+		m.statusBar.SetInfo(tmsg.Text)
 	}
 
 	// dispatch message to the active component. Key presses belong to the
@@ -810,19 +793,16 @@ func (m *Model) emitStatusUpdate() tea.Cmd {
 			pane = "local"
 		}
 	}
-	// The transfer tallies participate in the dedup below, so a
-	// TransferAddMsg/TransferDoneMsg pass (which falls through to the
-	// final emitStatusUpdate) always refreshes the bar's summary.
-	running, done, failed := m.transferPanel.Counts()
+	// Transfer state is deliberately absent: the bar pulls a live
+	// transferpanel.Stats() snapshot on the render path (composeView), so
+	// the byte counters moving on every 200ms tick never fight the dedup
+	// below.
 	upd := types.StatusUpdateMsg{
-		Profile:          m.selectedProfile,
-		Bucket:           m.selectedBucket,
-		Prefix:           prefix,
-		SelectedCount:    selected,
-		Pane:             pane,
-		TransfersRunning: running,
-		TransfersDone:    done,
-		TransfersFailed:  failed,
+		Profile:       m.selectedProfile,
+		Bucket:        m.selectedBucket,
+		Prefix:        prefix,
+		SelectedCount: selected,
+		Pane:          pane,
 	}
 	if upd == m.lastStatus {
 		return nil
@@ -841,93 +821,10 @@ func (m *Model) emitStatusUpdate() tea.Cmd {
 	}
 }
 
-// appendHistoryCmd builds a history.Record for the transfer that tmsg just
-// turned terminal and returns a tea.Cmd that appends it to the persistent
-// history file. The record is snapshotted from the panel row (which
-// already carries the final status, byte counts, note and FinishedAt); a
-// row that was pruned before the message arrived falls back to the fields
-// echoed on the message itself. The file IO happens inside the Cmd so
-// Update never blocks on it.
-func (m *Model) appendHistoryCmd(tmsg transferpanel.TransferDoneMsg) tea.Cmd {
-	if m.historyStore == nil {
-		return nil
-	}
-	rec := history.Record{
-		Time:  time.Now().Format(time.RFC3339),
-		Op:    string(tmsg.Op),
-		Label: tmsg.Label,
-		Bytes: -1,
-		Note:  tmsg.Note,
-	}
-	switch {
-	case errors.Is(tmsg.Err, context.Canceled):
-		rec.Status = string(transferpanel.StatusCanceled)
-	case tmsg.Err != nil:
-		rec.Status = string(transferpanel.StatusFailed)
-		rec.Error = tmsg.Err.Error()
-	default:
-		rec.Status = string(transferpanel.StatusDone)
-	}
-	if t, ok := m.transferPanel.Transfer(tmsg.ID); ok {
-		rec.Status = string(t.Status)
-		rec.Note = t.Note
-		if t.Err != nil && t.Status == transferpanel.StatusFailed {
-			rec.Error = t.Err.Error()
-		}
-		if t.Done > 0 {
-			rec.Bytes = t.Done
-		}
-		if !t.FinishedAt.IsZero() {
-			rec.Time = t.FinishedAt.Format(time.RFC3339)
-			if !t.StartedAt.IsZero() {
-				rec.DurationMs = t.FinishedAt.Sub(t.StartedAt).Milliseconds()
-			}
-		}
-	}
-	store := m.historyStore
-	return func() tea.Msg {
-		if err := store.Append(rec); err != nil {
-			log.Println("history append:", err)
-		}
-		return nil
-	}
-}
-
-// cancelAllOnQuit cancels every outstanding transfer and synchronously
-// appends a canceled record for each row that was still queued/running.
-// Quit returns tea.Quit right after this, so the op goroutines'
-// TransferDoneMsg (and its append Cmd) never runs — without this, a
-// transfer interrupted by quitting would leave no trace in the history
-// even though the same cancellation via 'x' would.
+// cancelAllOnQuit cancels every outstanding transfer context so no op
+// goroutine outlives the TUI.
 func (m *Model) cancelAllOnQuit() {
-	active := m.transferPanel.Active()
 	m.transferPanel.CancelAll()
-	if m.historyStore == nil {
-		return
-	}
-	now := time.Now()
-	for _, t := range active {
-		if t.Progress != nil {
-			t.Done, _ = t.Progress.Load()
-		}
-		rec := history.Record{
-			Time:   now.Format(time.RFC3339),
-			Op:     string(t.Op),
-			Label:  t.Label,
-			Status: string(transferpanel.StatusCanceled),
-			Bytes:  -1,
-			Note:   t.Note,
-		}
-		if t.Done > 0 {
-			rec.Bytes = t.Done
-		}
-		if !t.StartedAt.IsZero() {
-			rec.DurationMs = now.Sub(t.StartedAt).Milliseconds()
-		}
-		if err := m.historyStore.Append(rec); err != nil {
-			log.Println("history append:", err)
-		}
-	}
 }
 
 // filtering reports whether the FOCUSED pane's filter input is focused
@@ -955,7 +852,7 @@ func (m Model) filtering() bool {
 // active, so they never clobber a live modal or steal keys from an overlay
 // the user is reading.
 func (m Model) overlayActive() bool {
-	return m.modal.IsVisible() || m.help.IsVisible() || m.historyView.IsVisible() ||
+	return m.modal.IsVisible() || m.help.IsVisible() ||
 		m.transferView.IsVisible() || m.versionView.IsVisible() ||
 		m.contentView.IsVisible() || m.metaView.IsVisible()
 }
@@ -999,27 +896,29 @@ func (m Model) viewContent() string {
 }
 
 // composeView stacks the main content above the status bar, then applies
-// the overlay precedence (help > history > transfers > versions, modal on
+// the overlay precedence (help > transfers > versions, modal on
 // top). Shared by the single- and dual-pane branches of View. The lists
 // own every row above the one-line status bar; transfers are ambient in
 // the bar's tallies and on demand in the 't' overlay.
 func (m Model) composeView(mainContent string) string {
+	// The bar's transfer segment renders from a live stats snapshot taken
+	// here, on the render path: every Update pass (including the panel's
+	// 200ms ticks) ends in a View, so the progress bar stays current
+	// without routing byte counters through the deduped StatusUpdateMsg.
+	bar := m.statusBar
+	bar.SetTransferStats(m.transferPanel.Stats())
 	layout := lipgloss.JoinVertical(
 		lipgloss.Top,
 		mainContent,
-		m.statusBar.View(),
+		bar.View(),
 	)
 
-	// Help and history are full-canvas overlays (their View() returns a
-	// width×height canvas with the content centered via lipgloss.Place),
-	// so they replace the layout outright. Help takes precedence over the
-	// modal so the user can always summon the cheat sheet, even with a
-	// modal open.
+	// Help is a full-canvas overlay (its View() returns a width×height
+	// canvas with the content centered via lipgloss.Place), so it replaces
+	// the layout outright. Help takes precedence over the modal so the
+	// user can always summon the cheat sheet, even with a modal open.
 	if m.help.IsVisible() {
 		return m.help.View()
-	}
-	if m.historyView.IsVisible() {
-		return m.historyView.View()
 	}
 	// The transfers and versions overlays are also full-canvas, but the
 	// modal outranks them: a modal opened from an overlay row action (or

@@ -1,7 +1,7 @@
 // Local-filesystem operations for the dual-pane local pane (dispatched by
 // handleDualFileOp with local focus): D deletes, r renames, B creates a
 // directory, y copies the highlighted path to the clipboard. Delete runs
-// through the transfer panel (row + history) like the remote ops; rename
+// through the transfer panel (a live row) like the remote ops; rename
 // and mkdir are instant and report back via localFSDoneMsg, which tui.go
 // turns into a pane refresh (keeping the cursor on the touched entry).
 package tui

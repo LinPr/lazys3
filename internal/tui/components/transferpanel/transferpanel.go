@@ -1,9 +1,10 @@
 // Package transferpanel tracks in-flight and recently completed file
 // operations (downloads, uploads, deletes, copies, renames, bucket
-// make/remove). It is the single transfer-state store: the status bar
-// tallies come from Counts(), and the full-screen transfers overlay
-// (components/transferview, toggled with 't') renders from Rows(). The
-// panel's own compact View is retained but no longer part of the layout.
+// make/remove). It is the single transfer-state store: the status bar's
+// transfer segment renders from Stats(), and the full-screen transfers
+// overlay (components/transferview, toggled with 't') renders from
+// Rows(). The panel's own compact View is retained but no longer part of
+// the layout.
 //
 // The panel is driven by messages emitted by the file-op tea.Cmds in
 // objectlist/ops.go:
@@ -32,6 +33,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/LinPr/lazys3/internal/tui/types"
 )
 
 // Op is the kind of operation a Transfer represents.
@@ -175,6 +178,24 @@ type Model struct {
 	height     int
 	maxVisible int
 	idCounter  uint64
+
+	// Status-bar segment tallies (see Stats). The batch counters cover
+	// the current activity burst of upload/download rows; the lifetime
+	// counters accumulate completed uploads/downloads over the whole
+	// program run and are NEVER reset, so they survive pruneFinished
+	// evicting the rows they were counted from.
+	batchUpDone    int
+	batchUpTotal   int
+	batchDownDone  int
+	batchDownTotal int
+	// Batch byte accumulators: a terminal row's final bytes are folded in
+	// by noteTerminal so the aggregate bar stays monotonic over the burst
+	// (a completing row's bytes would otherwise vanish from Stats' active
+	// sum). Reset with the batch counters.
+	batchBytesDone  int64
+	batchBytesTotal int64
+	lifetimeUp      int
+	lifetimeDown    int
 }
 
 // NewModel returns a transfer panel model. The panel starts hidden and is
@@ -203,6 +224,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		if t.Status == StatusRunning && t.StartedAt.IsZero() {
 			t.StartedAt = time.Now()
 		}
+		m.noteAdded(t)
 		m.transfers = append(m.transfers, t)
 		m.pruneFinished()
 		m.visible = true
@@ -262,10 +284,12 @@ func (m *Model) updateStatus(id string, status Status, err error) {
 		if t.Status == StatusCanceled {
 			status = StatusCanceled
 		}
+		prev := t.Status
 		t.Status = status
 		t.Err = err
 		switch status {
 		case StatusDone, StatusFailed, StatusCanceled:
+			m.noteTerminal(t, prev, status)
 			t.FinishedAt = time.Now()
 			if t.Cancel != nil {
 				t.Cancel()
@@ -306,6 +330,7 @@ func (m *Model) Add(t Transfer) string {
 	if t.Status == "" {
 		t.Status = StatusQueued
 	}
+	m.noteAdded(t)
 	m.transfers = append(m.transfers, t)
 	m.pruneFinished()
 	m.visible = true
@@ -354,6 +379,7 @@ func (m *Model) UpdateProgress(id string, done, total int64, status Status, err 
 		if t.Status == StatusDone || t.Status == StatusFailed || t.Status == StatusCanceled {
 			return
 		}
+		prev := t.Status
 		t.Done = done
 		t.Total = total
 		if status != "" && t.Status != StatusCanceled {
@@ -363,6 +389,7 @@ func (m *Model) UpdateProgress(id string, done, total int64, status Status, err 
 			t.Err = err
 		}
 		if status == StatusDone || status == StatusFailed {
+			m.noteTerminal(t, prev, status)
 			t.FinishedAt = time.Now()
 		} else if status == StatusRunning && t.StartedAt.IsZero() {
 			t.StartedAt = time.Now()
@@ -385,18 +412,6 @@ func (m *Model) SetNote(id, note string) {
 			return
 		}
 	}
-}
-
-// Transfer returns a copy of the named transfer's row. Used by the TUI to
-// snapshot the final row state (bytes, StartedAt/FinishedAt, note) when a
-// transfer turns terminal, e.g. for the persistent history file.
-func (m Model) Transfer(id string) (Transfer, bool) {
-	for i := range m.transfers {
-		if m.transfers[i].ID == id {
-			return m.transfers[i], true
-		}
-	}
-	return Transfer{}, false
 }
 
 // Status returns the named transfer's status.
@@ -434,6 +449,7 @@ func (m *Model) CancelByID(id string) bool {
 		}
 		t.Cancel()
 		t.Cancel = nil
+		m.noteTerminal(t, t.Status, StatusCanceled)
 		t.Status = StatusCanceled
 		t.FinishedAt = time.Now()
 		return true
@@ -449,6 +465,7 @@ func (m *Model) CancelLatest() (string, bool) {
 		if (t.Status == StatusRunning || t.Status == StatusQueued) && t.Cancel != nil {
 			t.Cancel()
 			t.Cancel = nil
+			m.noteTerminal(t, t.Status, StatusCanceled)
 			t.Status = StatusCanceled
 			t.FinishedAt = time.Now()
 			m.visible = true
@@ -458,32 +475,142 @@ func (m *Model) CancelLatest() (string, bool) {
 	return "", false
 }
 
-// Active returns copies of the queued/running rows. Used by the quit path
-// to snapshot in-flight transfers before CancelAll marks them canceled.
-func (m Model) Active() []Transfer {
-	var active []Transfer
-	for _, t := range m.transfers {
-		if t.Status == StatusRunning || t.Status == StatusQueued {
-			active = append(active, t)
-		}
+// noteAdded maintains the status-bar batch counters when an upload or
+// download row is queued: adding one while none is active starts a new
+// batch (the previous batch's tallies are reset), and the direction's
+// batch total grows. Other op kinds don't participate in the segment.
+// Must run BEFORE the row is appended so the "none active" check sees
+// the pre-add state.
+func (m *Model) noteAdded(t Transfer) {
+	if t.Op != OpUpload && t.Op != OpDownload {
+		return
 	}
-	return active
+	if t.Status != StatusQueued && t.Status != StatusRunning {
+		return
+	}
+	if m.activeUpDown() == 0 {
+		m.batchUpDone, m.batchUpTotal = 0, 0
+		m.batchDownDone, m.batchDownTotal = 0, 0
+		m.batchBytesDone, m.batchBytesTotal = 0, 0
+	}
+	if t.Op == OpUpload {
+		m.batchUpTotal++
+	} else {
+		m.batchDownTotal++
+	}
 }
 
-// Counts tallies the panel's rows for the status bar's transfer summary:
-// running includes queued rows, failed includes canceled ones.
-func (m Model) Counts() (running, done, failed int) {
-	for _, t := range m.transfers {
-		switch t.Status {
-		case StatusRunning, StatusQueued:
-			running++
-		case StatusDone:
-			done++
-		case StatusFailed, StatusCanceled:
-			failed++
+// noteTerminal maintains the batch and lifetime counters for an upload or
+// download row turning terminal. prev is the row's pre-transition status:
+// a row already terminal is never counted again, so every transfer bumps
+// the lifetime counters exactly once — and, because the counters live on
+// the model rather than on the rows, they survive pruneFinished.
+func (m *Model) noteTerminal(t *Transfer, prev, next Status) {
+	if t.Op != OpUpload && t.Op != OpDownload {
+		return
+	}
+	if prev != StatusQueued && prev != StatusRunning {
+		return
+	}
+	switch next {
+	case StatusDone:
+		if t.Op == OpUpload {
+			m.batchUpDone++
+			m.lifetimeUp++
+		} else {
+			m.batchDownDone++
+			m.lifetimeDown++
+		}
+	case StatusFailed, StatusCanceled:
+		// A failure leaves the batch (the ✗ tally covers it) so the
+		// segment's done/total still converges for the rest.
+		if t.Op == OpUpload && m.batchUpTotal > 0 {
+			m.batchUpTotal--
+		} else if t.Op == OpDownload && m.batchDownTotal > 0 {
+			m.batchDownTotal--
 		}
 	}
-	return running, done, failed
+	// Fold the row's final bytes into the batch accumulators so the
+	// aggregate bar never regresses when the row leaves Stats' active
+	// sum: a done row keeps its full total, a failed/canceled row keeps
+	// only what it actually moved (its remaining bytes leave the
+	// denominator, mirroring the row leaving the batch total). Rows with
+	// unknown totals never join the byte aggregate, active or terminal.
+	done, total := t.Done, t.Total
+	if t.Progress != nil {
+		done, total = t.Progress.Load()
+	}
+	if total <= 0 {
+		return
+	}
+	if next == StatusDone || done > total {
+		done = total
+	}
+	m.batchBytesDone += done
+	m.batchBytesTotal += done
+}
+
+// activeUpDown counts the queued/running upload+download rows.
+func (m Model) activeUpDown() int {
+	n := 0
+	for _, t := range m.transfers {
+		if (t.Op == OpUpload || t.Op == OpDownload) &&
+			(t.Status == StatusRunning || t.Status == StatusQueued) {
+			n++
+		}
+	}
+	return n
+}
+
+// Stats snapshots the status bar's transfer segment: active up/download
+// counts, the current batch's done/total per direction, the aggregate
+// byte progress of the batch's known-total rows (live bytes from the
+// active rows plus the folded finals of the terminal ones, so the bar is
+// monotonic over the burst), the never-reset lifetime completion
+// counters, the failed+canceled row tally (any op), and the tick frame
+// for the indeterminate bounce. tui.go calls this on the render path so
+// the segment follows the 200ms tick without routing byte counters
+// through the deduped StatusUpdateMsg.
+func (m Model) Stats() types.TransferStats {
+	s := types.TransferStats{
+		UpDone:       m.batchUpDone,
+		UpTotal:      m.batchUpTotal,
+		DownDone:     m.batchDownDone,
+		DownTotal:    m.batchDownTotal,
+		BytesDone:    m.batchBytesDone,
+		BytesTotal:   m.batchBytesTotal,
+		LifetimeUp:   m.lifetimeUp,
+		LifetimeDown: m.lifetimeDown,
+		Frame:        m.frame,
+	}
+	for _, t := range m.transfers {
+		switch t.Status {
+		case StatusFailed, StatusCanceled:
+			s.Failed++
+			continue
+		case StatusRunning, StatusQueued:
+			// fall through to the direction tally below
+		default:
+			continue
+		}
+		if t.Op != OpUpload && t.Op != OpDownload {
+			continue
+		}
+		if t.Op == OpUpload {
+			s.UpActive++
+		} else {
+			s.DownActive++
+		}
+		done, total := t.Done, t.Total
+		if t.Progress != nil {
+			done, total = t.Progress.Load()
+		}
+		if total > 0 {
+			s.BytesTotal += total
+			s.BytesDone += min(done, total)
+		}
+	}
+	return s
 }
 
 // CancelAll cancels every outstanding transfer context. Called on quit so
@@ -494,6 +621,7 @@ func (m *Model) CancelAll() {
 		if (t.Status == StatusRunning || t.Status == StatusQueued) && t.Cancel != nil {
 			t.Cancel()
 			t.Cancel = nil
+			m.noteTerminal(t, t.Status, StatusCanceled)
 			t.Status = StatusCanceled
 			t.FinishedAt = time.Now()
 		}

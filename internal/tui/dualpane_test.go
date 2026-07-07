@@ -11,6 +11,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/LinPr/lazys3/internal/tui/components/locallist"
 	"github.com/LinPr/lazys3/internal/tui/components/objectlist"
@@ -614,8 +615,7 @@ func TestDualPaneViewRendersBothPanes(t *testing.T) {
 	if w := lipgloss.Width(out); w != 100 {
 		t.Fatalf("dual view width = %d, want 100", w)
 	}
-	// Left pane: the remote profile list; right pane: the local list
-	// (its title carries the sort status).
+	// Left pane: the remote profile list; right pane: the local list.
 	if !strings.Contains(out, "AWS Profiles") {
 		t.Fatal("dual view missing the remote pane")
 	}
@@ -769,8 +769,9 @@ func TestDualPaneHeightsMatchOnEntry(t *testing.T) {
 
 // TestStatusUpdatePaneAndTransferCounts pins the status bar plumbing: the
 // pane indicator follows the dual-pane focus (empty single-pane), and the
-// transfer tallies refresh on TransferAddMsg/TransferDoneMsg without any
-// key press, so the bar's summary never goes stale.
+// transfer segment renders live from the panel's stats on the render path
+// — a TransferAddMsg/TransferDoneMsg changes the rendered bar without any
+// key press or StatusUpdateMsg, so the summary never goes stale.
 func TestStatusUpdatePaneAndTransferCounts(t *testing.T) {
 	m := NewLazyS3Model()
 	m = updateModel(t, m, tea.WindowSizeMsg{Width: 100, Height: 30})
@@ -791,20 +792,28 @@ func TestStatusUpdatePaneAndTransferCounts(t *testing.T) {
 	m = updateModel(t, m, transferpanel.TransferAddMsg{Transfer: transferpanel.Transfer{
 		ID: "c1", Op: transferpanel.OpDownload, Status: transferpanel.StatusRunning,
 	}})
-	if m.lastStatus.TransfersRunning != 1 {
-		t.Fatalf("running = %d after add, want 1", m.lastStatus.TransfersRunning)
+	if st := m.transferPanel.Stats(); st.DownActive != 1 || st.DownTotal != 1 {
+		t.Fatalf("stats after add = %+v, want 1 active / 1 batch download", st)
+	}
+	if out := ansi.Strip(m.viewContent()); !strings.Contains(out, "v0/1") {
+		t.Fatalf("rendered bar missing the running download segment:\n%s", out)
 	}
 	m = updateModel(t, m, transferpanel.TransferDoneMsg{ID: "c1", Op: transferpanel.OpDownload})
-	if m.lastStatus.TransfersRunning != 0 || m.lastStatus.TransfersDone != 1 {
-		t.Fatalf("running/done = %d/%d after done, want 0/1",
-			m.lastStatus.TransfersRunning, m.lastStatus.TransfersDone)
+	if st := m.transferPanel.Stats(); st.DownActive != 0 || st.LifetimeDown != 1 {
+		t.Fatalf("stats after done = %+v, want idle with lifetime download 1", st)
+	}
+	if out := ansi.Strip(m.viewContent()); !strings.Contains(out, "v1") {
+		t.Fatalf("rendered bar missing the lifetime download tally:\n%s", out)
 	}
 	m = updateModel(t, m, transferpanel.TransferAddMsg{Transfer: transferpanel.Transfer{
 		ID: "c2", Op: transferpanel.OpUpload, Status: transferpanel.StatusRunning,
 	}})
 	m = updateModel(t, m, transferpanel.TransferDoneMsg{ID: "c2", Op: transferpanel.OpUpload, Err: context.Canceled})
-	if m.lastStatus.TransfersFailed != 1 {
-		t.Fatalf("failed = %d after cancel, want 1 (canceled counts as failed)", m.lastStatus.TransfersFailed)
+	if st := m.transferPanel.Stats(); st.Failed != 1 || st.LifetimeUp != 0 {
+		t.Fatalf("stats after cancel = %+v, want failed 1 and no lifetime upload", st)
+	}
+	if out := ansi.Strip(m.viewContent()); !strings.Contains(out, "x1") {
+		t.Fatalf("rendered bar missing the failed tally:\n%s", out)
 	}
 }
 

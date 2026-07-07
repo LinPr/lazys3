@@ -93,7 +93,7 @@ func TestProgressStateConcurrent(t *testing.T) {
 }
 
 // TestNewCmdLabelPlumbing pins that a caller-supplied Label is echoed on
-// the TransferDoneMsg (so the history record matches the panel row) and
+// the TransferDoneMsg (so the done message matches the panel row) and
 // that an empty Label falls back to "sync <src> -> <dst>". The nil-storage
 // error path terminates NewCmd without any network.
 func TestNewCmdLabelPlumbing(t *testing.T) {

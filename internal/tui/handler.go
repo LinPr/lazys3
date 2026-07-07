@@ -854,9 +854,7 @@ func (m *Model) refreshAfterOp(done transferpanel.TransferDoneMsg) tea.Cmd {
 	case transferpanel.OpDelete, transferpanel.OpCopy, transferpanel.OpRename,
 		transferpanel.OpUpload:
 		if m.state == state.ActiveObjectList {
-			opt := m.objectListOptionFromState()
-			m.objectlist.SetLoading(true)
-			cmds = append(cmds, objectlist.FetchObjectListCmd(opt))
+			cmds = append(cmds, m.objectlist.Fetch(m.objectListOptionFromState()))
 		}
 	case transferpanel.OpMakeBucket, transferpanel.OpDeleteBucket:
 		if m.state == state.ActiveBucketList {
@@ -868,9 +866,7 @@ func (m *Model) refreshAfterOp(done transferpanel.TransferDoneMsg) tea.Cmd {
 		// A sync may add/delete objects in the currently viewed listing.
 		switch m.state {
 		case state.ActiveObjectList:
-			opt := m.objectListOptionFromState()
-			m.objectlist.SetLoading(true)
-			cmds = append(cmds, objectlist.FetchObjectListCmd(opt))
+			cmds = append(cmds, m.objectlist.Fetch(m.objectListOptionFromState()))
 		case state.ActiveBucketList:
 			opt := m.bucketListOptionFromState()
 			m.bucketList.SetLoading(true)
@@ -1061,11 +1057,10 @@ func (m *Model) initComponentsSize(msg tea.WindowSizeMsg) {
 	// The status bar gets the remaining 1 row at the very bottom.
 	m.statusBar.SetSize(m.width, statusBarHeight)
 	m.modal.SetSize(m.width, m.height)
-	// The full-screen overlays (help, history, transfers, versions) and
-	// the floating p/m overlays get the whole canvas so they can lay
+	// The full-screen overlays (help, transfers, versions) and the
+	// floating p/m overlays get the whole canvas so they can lay
 	// themselves out over the screen.
 	m.help.SetSize(m.width, m.height)
-	m.historyView.SetSize(m.width, m.height)
 	m.transferView.SetSize(m.width, m.height)
 	m.versionView.SetSize(m.width, m.height)
 	m.contentView.SetSize(m.width, m.height)
@@ -1133,9 +1128,7 @@ func (m *Model) handleBucketSelect() tea.Cmd {
 		}
 
 		m.objectlist.SetTitle(s3uri)
-		m.objectlist.SetLoading(true)
-		cmd := objectlist.FetchObjectListCmd(opt)
-		cmds = append(cmds, cmd)
+		cmds = append(cmds, m.objectlist.Fetch(opt))
 	}
 
 	return tea.Batch(cmds...)
@@ -1177,10 +1170,8 @@ func (m *Model) handleObjectSelect() tea.Cmd {
 		}
 
 		m.objectlist.SetTitle(s3uri)
-		m.objectlist.SetLoading(true)
 		log.Println("----xx--- handleObjectSelect s3uri:", s3uri)
-		cmd := objectlist.FetchObjectListCmd(opt)
-		cmds = append(cmds, cmd)
+		cmds = append(cmds, m.objectlist.Fetch(opt))
 	}
 
 	return tea.Batch(cmds...)
@@ -1216,10 +1207,8 @@ func (m *Model) handleObjectUnSelect() tea.Cmd {
 	// Restore the cursor position saved when we descended into cur (the
 	// bucket root uses prefix "").
 	m.objectlist.RestorePosition(m.selectedBucket, parent)
-	m.objectlist.SetLoading(true)
 
-	opt := m.objectListOptionFromState()
-	return objectlist.FetchObjectListCmd(opt)
+	return m.objectlist.Fetch(m.objectListOptionFromState())
 }
 
 func (m *Model) handleForward(_ tea.Msg) tea.Cmd {

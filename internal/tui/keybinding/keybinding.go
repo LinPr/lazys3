@@ -1,7 +1,7 @@
 // Package keybinding holds global key bindings for the TUI.
 //
 // Keys already claimed by the global dispatcher (tui.go): q, ctrl+c,
-// enter, right, backspace, left, p, m, t, T, ?, space, a, d, u, D, r, c,
+// enter, right, backspace, left, p, m, t, g, ?, space, a, d, u, D, r, c,
 // B, s, x, y, Y, v, V, l, tab.
 // The object-list component additionally claims the keys below; they are
 // exported so the help overlay and the component reference one source of
@@ -53,9 +53,10 @@ const (
 	// handled in tui.go).
 	TransfersToggle = "t"
 
-	// HistoryToggle (shift+t) opens/closes the persistent transfer-history
-	// overlay (global, handled in tui.go).
-	HistoryToggle = "T"
+	// Goto opens the go-to-path modal for the focused pane (list contexts
+	// only; overlays swallow keys first, so 'g' keeps its jump-to-top
+	// meaning inside them).
+	Goto = "g"
 
 	// ContentPreview opens/closes the floating content-preview overlay
 	// (first 256 KiB of the highlighted file, remote or local; global,

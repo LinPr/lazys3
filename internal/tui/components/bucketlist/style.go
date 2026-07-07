@@ -59,10 +59,9 @@ func CustomStyle(isDark bool) (s list.Styles) {
 	s.TitleBar = lipgloss.NewStyle().
 		Padding(0, 0, 1, 2) //nolint:mnd
 
-	s.Title = lipgloss.NewStyle().
-		Background(lipgloss.Color("62")).
-		Foreground(lipgloss.Color("230")).
-		Padding(0, 1)
+	// The title chip is shared with the other lists (and the status bar's
+	// profile chip) so the theme keys title_fg/title_bg restyle them all.
+	s.Title = style.ListTitleStyle(true)
 
 	s.Spinner = lipgloss.NewStyle().
 		Foreground(lightDark(lipgloss.Color("#8E8E8E"), lipgloss.Color("#747373")))

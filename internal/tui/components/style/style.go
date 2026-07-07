@@ -63,6 +63,10 @@ var (
 			Background(lipgloss.Color("#444745ff")).
 			Padding(0, 1)
 
+	// listTitleUnfocusedFg dims the unfocused pane's title text in
+	// dual-pane mode so the focused pane reads at a glance.
+	listTitleUnfocusedFg = lipgloss.Color("#999999")
+
 	StatusMessageStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#04B575"))
 
@@ -72,3 +76,15 @@ var (
 				Background(lipgloss.Color("#cc0000")).
 				Padding(0, 1)
 )
+
+// ListTitleStyle is the title-bar chip shared by all four lists (profiles,
+// buckets, objects, local), matching the status bar's profile chip so the
+// theme keys title_fg/title_bg restyle both (TitleStyle is read live, after
+// Apply). The unfocused dual-pane title keeps the background but dims the
+// text.
+func ListTitleStyle(focused bool) lipgloss.Style {
+	if focused {
+		return TitleStyle
+	}
+	return TitleStyle.Foreground(listTitleUnfocusedFg)
+}

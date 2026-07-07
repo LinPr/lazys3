@@ -142,11 +142,12 @@ func (m *Model) SetGroups(groups []Group) { m.groups = groups }
 //   - Remote pane (S3):   file ops with the remote (bucket/object) list focused
 //   - Local pane:         the same op keys with the dual-pane local list focused
 //   - Selection & filter: marking, filtering and sorting the focused list
-//   - Overlays:           shared scroll and close keys of the ?/t/T/v/p/m overlays
+//   - Overlays:           shared scroll and close keys of the ?/t/v/p/m overlays
 //
 // Every key is documented in exactly one group, except the file-op keys
-// whose behaviour depends on pane focus (d/u/D/r/c/B/s/y): those appear
-// once per pane group with the focus-specific description (see
+// whose behaviour depends on pane focus (d/u/D/r/c/B/s/y/g): those appear
+// once per pane group with the focus-specific description — and 'g', which
+// is additionally a scroll key inside the overlays (see
 // TestHelpDocumentsKeysExactlyOnce).
 func DefaultBindings() []Group {
 	return []Group{
@@ -157,7 +158,6 @@ func DefaultBindings() []Group {
 				{Key: "ctrl+c", Desc: "force quit"},
 				{Key: "?", Desc: "toggle this help overlay"},
 				{Key: "t", Desc: "toggle the live transfers overlay (newest first, scrollable)"},
-				{Key: "T", Desc: "transfer history (persistent, across sessions)"},
 				{Key: "x", Desc: "cancel the most recent running transfer (transfers overlay: the highlighted one)"},
 				{Key: "l", Desc: "toggle dual-pane layout (local ⇄ remote, needs ≥80 cols)"},
 				{Key: "tab", Desc: "switch focus between remote and local panes (dual-pane)"},
@@ -165,7 +165,7 @@ func DefaultBindings() []Group {
 				{Key: "m", Desc: "object/file metadata (floating overlay; buckets and profiles too)"},
 				{Key: "enter / →", Desc: "open selected (profile → buckets → objects)"},
 				{Key: "backspace / ←", Desc: "go back one level"},
-				{Key: "↑ / k, ↓ / j", Desc: "move the list cursor (also scrolls the ?/t/T/v/p/m overlays)"},
+				{Key: "↑ / k, ↓ / j", Desc: "move the list cursor (also scrolls the ?/t/v/p/m overlays)"},
 			},
 		},
 		{
@@ -182,6 +182,7 @@ func DefaultBindings() []Group {
 				{Key: "Y", Desc: "generate presigned share URL (object files only)"},
 				{Key: "v", Desc: "object versions (download / restore / delete a version)"},
 				{Key: "V", Desc: "toggle bucket versioning (Enabled ⇄ Suspended, bucket list)"},
+				{Key: "g", Desc: "go to path: s3://bucket/prefix/ switches bucket, /path from the bucket root, rel/path from here"},
 			},
 		},
 		{
@@ -195,6 +196,7 @@ func DefaultBindings() []Group {
 				{Key: "B", Desc: "create a directory"},
 				{Key: "s", Desc: "sync directory: local pane → remote pane (prefilled, editable)"},
 				{Key: "y", Desc: "yank the highlighted entry's absolute path to the clipboard"},
+				{Key: "g", Desc: "go to directory (absolute, ~ or relative to the current one)"},
 			},
 		},
 		{

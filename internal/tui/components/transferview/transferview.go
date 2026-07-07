@@ -17,6 +17,13 @@
 // total shows just the done marker (no bouncing bar); failed shows the
 // error snippet; canceled its marker. Status glyphs fall back to ASCII
 // ("ok"/"x"/"-") when nerd_font is off, matching the status bar tallies.
+//
+// Rows are a fixed-column table under a dim header, columns in this order:
+// [marker+status glyph (4)] [op (10)] [progress bar+percent or status word
+// (17)] [file label (flex, ansi-truncated with …)] [note/error (24)] — the
+// fixed columns come BEFORE the variable-width label so alignment survives
+// long keys, and the note column is dropped when the terminal is too narrow
+// to leave the label its minimum width.
 package transferview
 
 import (
@@ -127,9 +134,9 @@ var boxStyle = lipgloss.NewStyle().
 	Padding(0, 1)
 
 // pageSize is how many transfer rows fit in the box: total height minus
-// the border frame, title and footer lines.
+// the border frame, title, column header and footer lines.
 func (m Model) pageSize() int {
-	page := m.height - boxStyle.GetVerticalFrameSize() - 2
+	page := m.height - boxStyle.GetVerticalFrameSize() - 3
 	if page < 1 {
 		page = 1
 	}
@@ -180,6 +187,34 @@ func statusGlyph(s transferpanel.Status) string {
 // barWidth is the progress bar cell budget.
 const barWidth = 10
 
+// Table column budgets. progW fits the widest progress cell
+// ("[██████████] 100%"): brackets + bar + space + 4-cell percent.
+const (
+	markerW = 4 // "▸ " + 2-cell status glyph
+	opW     = 10
+	progW   = barWidth + 7
+	noteW   = 24
+	colGap  = 2
+	// minLabelW is the least readable file column; when the note column
+	// would squeeze the label below it, the note is dropped instead.
+	minLabelW = 8
+)
+
+// columnWidths splits the inner width into the flex label column and the
+// note column (0 = dropped at narrow widths).
+func columnWidths(inner int) (labelW, noteWidth int) {
+	fixed := markerW + colGap + opW + colGap + progW + colGap
+	labelW = inner - fixed - colGap - noteW
+	if labelW >= minLabelW {
+		return labelW, noteW
+	}
+	labelW = inner - fixed
+	if labelW < minLabelW {
+		labelW = minLabelW
+	}
+	return labelW, 0
+}
+
 // animFrame derives the indeterminate bar's bounce position from wall-clock
 // time. The panel's tick frame only advances for Progress-carrying
 // transfers, so a sync (which reports via SyncPollMsg, no Progress counter)
@@ -227,15 +262,16 @@ func percent(done, total int64) string {
 	return fmt.Sprintf("%3.0f%%", pct)
 }
 
-// progressCell renders the bar/percent-or-status column for one row. A
-// terminal row always renders its final state: done with a known total is
+// progressCell renders the fixed-width bar+percent-or-status-word column.
+// A terminal row always renders its final state: done with a known total is
 // a FULL bar + 100% by definition (never the frozen last tick value); done
-// with an unknown total drops the bar entirely.
+// with an unknown total drops the bar entirely (status word only), as do
+// failed/canceled/queued rows.
 func progressCell(t transferpanel.Transfer, frame int) string {
 	switch t.Status {
 	case transferpanel.StatusDone:
 		if t.Total > 0 {
-			return fmt.Sprintf("[%s] 100%% done", strings.Repeat("█", barWidth))
+			return fmt.Sprintf("[%s] 100%%", strings.Repeat("█", barWidth))
 		}
 		return "done"
 	case transferpanel.StatusFailed:
@@ -246,52 +282,69 @@ func progressCell(t transferpanel.Transfer, frame int) string {
 		return "queued"
 	default: // running: live bar (max-so-far), bouncing when indeterminate
 		if t.Total > 0 {
-			return fmt.Sprintf("[%s] %s running", bar(t.Done, t.Total, frame), percent(t.Done, t.Total))
+			return fmt.Sprintf("[%s] %s", bar(t.Done, t.Total, frame), percent(t.Done, t.Total))
 		}
-		return fmt.Sprintf("[%s] running", bar(t.Done, t.Total, frame))
+		return fmt.Sprintf("[%s]", bar(t.Done, t.Total, frame))
 	}
 }
 
-// pad pads or truncates s to exactly w display cells.
+// pad pads or truncates s to exactly w display cells. A truncation that
+// lands on a double-width rune yields w-1 cells, so the result is
+// re-padded to keep the following columns aligned.
 func pad(s string, w int) string {
-	if sw := ansi.StringWidth(s); sw > w {
-		return ansi.Truncate(s, w, "…")
-	} else if sw < w {
+	if ansi.StringWidth(s) > w {
+		s = ansi.Truncate(s, w, "…")
+	}
+	if sw := ansi.StringWidth(s); sw < w {
 		return s + strings.Repeat(" ", w-sw)
 	}
 	return s
 }
 
-// renderRow renders one transfer fitted to inner cells:
+// renderRow renders one transfer as an aligned table row:
 //
-//	▸ ✓   download  s3://b/key -> ./key  [██████████] 100% done  note
+//	▸ ✓   download    [██████████] 100%  s3://b/key -> ./key   note
 func renderRow(t transferpanel.Transfer, selected bool, frame, inner int) string {
 	marker := "  "
 	if selected {
 		marker = "▸ "
 	}
-	const opW = 10
-	tail := "  " + progressCell(t, frame)
-	if t.Note != "" {
-		tail += "  " + ansi.Truncate(t.Note, 40, "…")
-	}
-	if t.Status == transferpanel.StatusFailed && t.Err != nil {
-		tail += "  " + ansi.Truncate(t.Err.Error(), 30, "…")
-	}
-	// marker(2) + glyph(2) + " " + op(opW) + "  " ahead of the label.
-	fixed := 2 + 2 + 1 + opW + 2
-	labelW := inner - fixed - ansi.StringWidth(tail)
-	if labelW < 8 {
-		labelW = 8
-	}
-	row := fmt.Sprintf("%s%s %s  %s%s",
-		marker,
-		pad(statusGlyph(t.Status), 2),
+	labelW, noteWidth := columnWidths(inner)
+	cells := []string{
+		marker + pad(statusGlyph(t.Status), markerW-2),
 		pad(string(t.Op), opW),
-		ansi.Truncate(t.Label, labelW, "…"),
-		tail,
-	)
+		pad(progressCell(t, frame), progW),
+		pad(t.Label, labelW),
+	}
+	if noteWidth > 0 {
+		// The note column carries the row note and, on failed rows, the
+		// error snippet.
+		note := t.Note
+		if t.Status == transferpanel.StatusFailed && t.Err != nil {
+			if note != "" {
+				note += " · "
+			}
+			note += t.Err.Error()
+		}
+		cells = append(cells, pad(note, noteWidth))
+	}
+	row := strings.Join(cells, strings.Repeat(" ", colGap))
 	return ansi.Truncate(row, inner, "")
+}
+
+// headerRow renders the dim column header the rows align under.
+func headerRow(inner int) string {
+	labelW, noteWidth := columnWidths(inner)
+	cells := []string{
+		pad("", markerW),
+		pad("op", opW),
+		pad("progress", progW),
+		pad("file", labelW),
+	}
+	if noteWidth > 0 {
+		cells = append(cells, pad("note", noteWidth))
+	}
+	return ansi.Truncate(strings.Join(cells, strings.Repeat(" ", colGap)), inner, "")
 }
 
 // View renders the overlay from the live rows snapshot (newest first): a
@@ -333,7 +386,10 @@ func (m Model) View(rows []transferpanel.Transfer) string {
 		offset = 0
 	}
 
-	lines := []string{titleStyle.Render("lazys3 — transfers (live, newest first)")}
+	lines := []string{
+		titleStyle.Render("lazys3 — transfers (live, newest first)"),
+		dimStyle.Render(headerRow(inner)),
+	}
 
 	if len(rows) == 0 {
 		lines = append(lines, dimStyle.Render("no transfers this session — d/u/c/s start one"))

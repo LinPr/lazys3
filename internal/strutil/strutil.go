@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 var humanDivisors = [...]struct {
@@ -37,6 +38,14 @@ func HumanizeBytes(b int64) string {
 	}
 
 	return fmt.Sprintf("%.1f%s", float64(b)/float64(div), suffix)
+}
+
+// LocalTime renders a timestamp in the user's local timezone for list
+// columns. S3 timestamps arrive from the SDK in UTC; every display site
+// must go through this (or an explicit .Local()) so times read as the
+// user's wall clock.
+func LocalTime(t time.Time) string {
+	return t.Local().Format("2006-01-02 15:04")
 }
 
 // JSON is a helper function for creating JSON-encoded strings.

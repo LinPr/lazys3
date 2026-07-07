@@ -84,11 +84,11 @@ func TestContentPreviewOnRemoteFileOpensAndSwallows(t *testing.T) {
 	if m.help.IsVisible() {
 		t.Fatal("'?' opened help behind the content overlay")
 	}
-	// t/T/v/m are swallowed too: the precedence chain is untouched.
-	for _, r := range []rune{'t', 'T', 'v', 'm'} {
+	// t/v/m are swallowed too: the precedence chain is untouched.
+	for _, r := range []rune{'t', 'v', 'm'} {
 		m = updateModel(t, m, keyPress(r))
 	}
-	if m.transferView.IsVisible() || m.historyView.IsVisible() || m.versionView.IsVisible() || m.metaView.IsVisible() {
+	if m.transferView.IsVisible() || m.versionView.IsVisible() || m.metaView.IsVisible() {
 		t.Fatal("a swallowed key opened another overlay behind the content preview")
 	}
 	if !m.contentView.IsVisible() {

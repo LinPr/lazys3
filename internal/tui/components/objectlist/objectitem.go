@@ -90,7 +90,7 @@ func (o Object) Description() string {
 	}
 	return fmt.Sprintf("%s  %s",
 		strutil.HumanizeBytes(o.size),
-		o.modTime.Format("2006-01-02 15:04"))
+		strutil.LocalTime(o.modTime))
 }
 
 func (o Object) FilterValue() string { return o.DisplayName() }
@@ -117,6 +117,10 @@ func (o Object) GetPreviewRequest() *preview.PreviewRequest {
 type FetchObjectListResultMsg struct {
 	Objects []Object
 	Err     error
+	// Gen is the fetch generation stamped by Model.Fetch; Update drops
+	// results whose generation was superseded. Zero means unguarded (a
+	// bare FetchObjectListCmd).
+	Gen int
 }
 
 // fetchTimeout bounds an object-list fetch so a hung endpoint cannot leave

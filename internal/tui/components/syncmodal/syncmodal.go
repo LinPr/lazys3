@@ -158,10 +158,9 @@ type CmdDeps struct {
 	// TransferID is the transfer-panel row the sync updates. The
 	// handler assigns it via transferpanel.NewID before calling NewCmd.
 	TransferID string
-	// Label is the row label echoed on every TransferDoneMsg (and thus
-	// into the persistent history). Empty falls back to
-	// "sync <src> -> <dst>"; the dual-pane dir copies pass their
-	// "dir: ..." row label so the history matches the panel.
+	// Label is the row label echoed on every TransferDoneMsg. Empty
+	// falls back to "sync <src> -> <dst>"; the dual-pane dir copies pass
+	// their "dir: ..." row label so the done message matches the panel.
 	Label string
 }
 

@@ -84,6 +84,26 @@ func TestViewMarkersRender(t *testing.T) {
 	}
 }
 
+// TestViewTimesRenderLocal pins the timezone fix: version LastModified (UTC
+// from the SDK) renders as the local wall clock. The expectation is built
+// with .Local() so the test is deterministic on any machine.
+func TestViewTimesRenderLocal(t *testing.T) {
+	utc := at(2026, 7, 6, 12)
+	m := shown("bkt", "file.txt")
+	m = loaded(m, []s3store.ObjectVersion{
+		{Key: "file.txt", VersionID: "v1", Size: 2, LastModified: utc, IsLatest: true},
+	}, "Enabled")
+	v := ansi.Strip(m.View())
+	if want := utc.Local().Format("2006-01-02 15:04"); !strings.Contains(v, want) {
+		t.Errorf("view missing local-rendered time %q:\n%s", want, v)
+	}
+	if _, off := utc.Local().Zone(); off != 0 {
+		if raw := utc.Format("2006-01-02 15:04"); strings.Contains(v, raw) {
+			t.Errorf("view still renders raw UTC %q:\n%s", raw, v)
+		}
+	}
+}
+
 func TestViewLoadingState(t *testing.T) {
 	m := shown("bkt", "file.txt")
 	if v := m.View(); !strings.Contains(v, "loading versions") {

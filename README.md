@@ -2,7 +2,7 @@
 
 English | [简体中文](README.zh-CN.md)
 
-A terminal UI for browsing and operating S3-compatible object storage (AWS S3, Aliyun OSS, MinIO, ...) like a file manager — dual-pane transfers, presigned URLs, versioning, and a persistent transfer history, all from the keyboard.
+A terminal UI for browsing and operating S3-compatible object storage (AWS S3, Aliyun OSS, MinIO, ...) like a file manager — dual-pane transfers, presigned URLs, and versioning, all from the keyboard.
 
 ![demo](docs/demo.gif)
 
@@ -23,7 +23,7 @@ A terminal UI for browsing and operating S3-compatible object storage (AWS S3, A
 - Upload (`u` in the local pane) and download (`d` in the remote pane), including recursive folder transfers through the sync engine
 - Directory sync (`s`): local ⇄ S3 and S3 ⇄ S3; dual-pane prefills both sides
 - Live transfers overlay (`t`) with progress bars, newest first; `x` cancels a running transfer
-- Persistent transfer history (`T`) across sessions, stored as JSONL in `$XDG_STATE_HOME/lazys3/history.jsonl`
+- Go to path (`g`): jump straight to an `s3://bucket/prefix/` or a local directory without walking the tree
 
 **Manage**
 
@@ -57,7 +57,6 @@ Press `?` inside lazys3 to see this list as a scrollable overlay.
 | `ctrl+c` | force quit |
 | `?` | toggle the help overlay |
 | `t` | toggle the live transfers overlay (newest first, scrollable) |
-| `T` | transfer history (persistent, across sessions) |
 | `x` | cancel the most recent running transfer (transfers overlay: the highlighted one) |
 | `l` | toggle dual-pane layout (local ⇄ remote, needs ≥80 cols) |
 | `tab` | switch focus between remote and local panes (dual-pane) |
@@ -65,7 +64,7 @@ Press `?` inside lazys3 to see this list as a scrollable overlay.
 | `m` | object/file metadata (floating overlay; buckets and profiles too) |
 | `enter` / `→` | open selected (profile → buckets → objects) |
 | `backspace` / `←` | go back one level |
-| `↑`/`k`, `↓`/`j` | move the list cursor (also scrolls the `?`/`t`/`T`/`v`/`p`/`m` overlays) |
+| `↑`/`k`, `↓`/`j` | move the list cursor (also scrolls the `?`/`t`/`v`/`p`/`m` overlays) |
 
 ### Remote pane (S3)
 
@@ -82,6 +81,7 @@ Press `?` inside lazys3 to see this list as a scrollable overlay.
 | `Y` | generate presigned share URL (object files only) |
 | `v` | object versions (download / restore / delete a version) |
 | `V` | toggle bucket versioning (Enabled ⇄ Suspended, bucket list) |
+| `g` | go to path: `s3://bucket/prefix/` switches bucket, `/path` from the bucket root, `rel/path` from here |
 
 ### Local pane
 
@@ -95,6 +95,7 @@ Press `?` inside lazys3 to see this list as a scrollable overlay.
 | `B` | create a directory |
 | `s` | sync directory: local pane → remote pane (prefilled, editable) |
 | `y` | yank the highlighted entry's absolute path to the clipboard |
+| `g` | go to directory (absolute, `~` or relative to the current one) |
 
 ### Selection & filter
 
@@ -212,3 +213,4 @@ MIT — see [LICENSE](LICENSE).
 ---
 
 Contributing / development (build, tests, demo GIF): [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)
+、

@@ -5,20 +5,29 @@
 // The bar is driven by two messages delivered by the TUI's Update loop:
 //
 //   - types.StatusUpdateMsg — refreshes the profile, the focused-pane
-//     indicator, the selection count and the transfer tallies. The TUI
-//     emits this after dispatching to the active list so the bar always
-//     reflects the current state.
+//     indicator and the selection count. The TUI emits this after
+//     dispatching to the active list so the bar always reflects the
+//     current state.
 //   - types.ErrMsg — sets lastError so failures from file-op Cmds surface
-//     visibly. The error is dismissable (DismissError).
+//     visibly. The error is cleared by the user's next key press (tui.go
+//     calls SetError("") at the top of its KeyMsg handling).
+//
+// The transfer segment is NOT message-driven: tui.go pushes a live
+// types.TransferStats snapshot via SetTransferStats on the render path
+// (composeView), so the progress bar follows the transfer panel's 200ms
+// tick without routing byte counters through the deduped StatusUpdateMsg.
 //
 // Layout (one line, always):
 //
-//	[profile] [pane] [N selected] [▶R ✓D ✗F] [info] [error] … [? help]
+//	[profile] [pane] [N selected] [transfers] [info] [error] … [? help]
 //
-// The pane indicator appears only in dual-pane mode, the selection count
-// only when >0, and the transfer summary only when any transfer rows
-// exist. The transient info and the error share the remaining middle
-// width (ansi-aware middle truncation); "? help" is right-aligned.
+// The transfer segment shows, while any upload/download is active, an
+// aggregate progress bar with per-direction batch counts ("[███░░░░░]
+// ↑1/2 ↓0/1"); when nothing runs it shows the lifetime completed totals
+// ("↑N ↓M"). Failed/canceled rows keep the ✗ tally in both states. The
+// pane indicator appears only in dual-pane mode and the selection count
+// only when >0. The transient info and the error share the remaining
+// middle width (ansi-aware middle truncation); "? help" is right-aligned.
 package statusbar
 
 import (
@@ -35,19 +44,16 @@ import (
 
 // Model is the status bar state.
 type Model struct {
-	profile          string
-	bucket           string
-	prefix           string
-	selectedCount    int
-	pane             string
-	transfersRunning int
-	transfersDone    int
-	transfersFailed  int
-	lastError        string
-	info             string
-	width            int
-	height           int
-	dismissedError   string // snapshot of the dismissed error so we don't reshow
+	profile       string
+	bucket        string
+	prefix        string
+	selectedCount int
+	pane          string
+	stats         types.TransferStats
+	lastError     string
+	info          string
+	width         int
+	height        int
 }
 
 // NewModel returns a fresh, empty status bar.
@@ -67,27 +73,10 @@ func (m *Model) SetSize(w, h int) {
 }
 
 // SetError displays an error message on the bar. Empty messages clear the
-// error. Reissuing the same error string that the user just dismissed is
-// ignored so the bar doesn't flicker the same error back.
+// error (tui.go does this on every key press, so a failure never outstays
+// the user's next action).
 func (m *Model) SetError(msg string) {
-	if msg == "" {
-		m.lastError = ""
-		m.dismissedError = ""
-		return
-	}
-	if msg == m.dismissedError {
-		return
-	}
 	m.lastError = msg
-}
-
-// DismissError clears the current error and remembers it so a reissued
-// SetError with the same string does not resurface it.
-func (m *Model) DismissError() {
-	if m.lastError != "" {
-		m.dismissedError = m.lastError
-	}
-	m.lastError = ""
 }
 
 // SetInfo displays a transient informational note (e.g. "presigned URL
@@ -100,18 +89,16 @@ func (m *Model) SetInfo(msg string) { m.info = msg }
 func (m Model) Info() string { return m.info }
 
 // SetProfile / SetBucket / SetPrefix / SetSelectedCount / SetPane /
-// SetTransferCounts are imperative setters used by the TUI (and tests) to
+// SetTransferStats are imperative setters used by the TUI (and tests) to
 // keep the bar in sync without round-tripping through a message.
-func (m *Model) SetProfile(p string)    { m.profile = p }
-func (m *Model) SetBucket(b string)     { m.bucket = b }
-func (m *Model) SetPrefix(p string)     { m.prefix = p }
-func (m *Model) SetSelectedCount(n int) { m.selectedCount = n }
-func (m *Model) SetPane(p string)       { m.pane = p }
-func (m *Model) SetTransferCounts(running, done, failed int) {
-	m.transfersRunning = running
-	m.transfersDone = done
-	m.transfersFailed = failed
-}
+// SetTransferStats is called on the render path with a live
+// transferpanel.Stats() snapshot.
+func (m *Model) SetProfile(p string)                    { m.profile = p }
+func (m *Model) SetBucket(b string)                     { m.bucket = b }
+func (m *Model) SetPrefix(p string)                     { m.prefix = p }
+func (m *Model) SetSelectedCount(n int)                 { m.selectedCount = n }
+func (m *Model) SetPane(p string)                       { m.pane = p }
+func (m *Model) SetTransferStats(s types.TransferStats) { m.stats = s }
 
 // Profile / Bucket / Prefix / SelectedCount / Pane / LastError are read
 // accessors used by the TUI and by tests.
@@ -132,9 +119,6 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.prefix = tmsg.Prefix
 		m.selectedCount = tmsg.SelectedCount
 		m.pane = tmsg.Pane
-		m.transfersRunning = tmsg.TransfersRunning
-		m.transfersDone = tmsg.TransfersDone
-		m.transfersFailed = tmsg.TransfersFailed
 		// The info note is dismissed only on navigation-ish changes
 		// (ClearInfo); transfer-tally-only refreshes leave it readable.
 		if tmsg.ClearInfo {
@@ -146,37 +130,81 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	return m, nil
 }
 
-// transferSummary renders the "▶R ✓D ✗F" tallies (running incl. queued /
-// done / failed incl. canceled), zero segments omitted. ASCII fallbacks
-// (">R okD xF") are used when nerd_font is off. Empty when no transfer
-// rows exist at all.
-func (m Model) transferSummary() string {
-	if m.transfersRunning+m.transfersDone+m.transfersFailed == 0 {
-		return ""
-	}
-	run, ok, fail := "▶", "✓", "✗"
+// transferSegment renders the transfer block from the live stats snapshot.
+//
+// While any upload/download is active: "[███░░░░░] ↑1/2 ↓0/1" — an 8-cell
+// aggregate progress bar over the batch's rows with known byte totals
+// (indeterminate bounce when none is known), plus done/total batch counts
+// per direction (a direction with an empty batch is omitted). When
+// nothing is active: the lifetime completed totals "↑N ↓M" (never reset;
+// zero segments omitted). Failed/canceled rows append the ✗ tally in both
+// states. ASCII fallbacks ("[###-----] ^1/2 v0/1", "xF") when nerd_font
+// is off. Other op kinds (delete/mb/sync/...) only surface via ✗.
+func (m Model) transferSegment() string {
+	st := m.stats
+	up, down, fail := "↑", "↓", "✗"
 	if !style.NerdFontEnabled() {
-		run, ok, fail = ">", "ok", "x"
+		up, down, fail = "^", "v", "x"
 	}
 	runStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#3b82f6"))
 	okStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#22c55e"))
 	failStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#ef4444"))
 	var parts []string
-	if m.transfersRunning > 0 {
-		parts = append(parts, runStyle.Render(fmt.Sprintf("%s%d", run, m.transfersRunning)))
+	if st.UpActive+st.DownActive > 0 {
+		parts = append(parts, runStyle.Render("["+progressBar(st)+"]"))
+		if st.UpTotal > 0 {
+			parts = append(parts, runStyle.Render(fmt.Sprintf("%s%d/%d", up, st.UpDone, st.UpTotal)))
+		}
+		if st.DownTotal > 0 {
+			parts = append(parts, runStyle.Render(fmt.Sprintf("%s%d/%d", down, st.DownDone, st.DownTotal)))
+		}
+	} else {
+		if st.LifetimeUp > 0 {
+			parts = append(parts, okStyle.Render(fmt.Sprintf("%s%d", up, st.LifetimeUp)))
+		}
+		if st.LifetimeDown > 0 {
+			parts = append(parts, okStyle.Render(fmt.Sprintf("%s%d", down, st.LifetimeDown)))
+		}
 	}
-	if m.transfersDone > 0 {
-		parts = append(parts, okStyle.Render(fmt.Sprintf("%s%d", ok, m.transfersDone)))
-	}
-	if m.transfersFailed > 0 {
-		parts = append(parts, failStyle.Render(fmt.Sprintf("%s%d", fail, m.transfersFailed)))
+	if st.Failed > 0 {
+		parts = append(parts, failStyle.Render(fmt.Sprintf("%s%d", fail, st.Failed)))
 	}
 	return strings.Join(parts, " ")
 }
 
+// progressBar renders the segment's 8-cell bar: a determinate fill from
+// the aggregate byte counters when any active total is known, otherwise a
+// 3-cell block bouncing with the panel's tick frame (never a bogus
+// percentage).
+func progressBar(st types.TransferStats) string {
+	const width = 8
+	full, empty := "█", "░"
+	if !style.NerdFontEnabled() {
+		full, empty = "#", "-"
+	}
+	if st.BytesTotal <= 0 {
+		const block = 3
+		span := width - block
+		pos := st.Frame % (2 * span)
+		if pos > span {
+			pos = 2*span - pos
+		}
+		return strings.Repeat(empty, pos) + strings.Repeat(full, block) +
+			strings.Repeat(empty, width-block-pos)
+	}
+	pct := float64(st.BytesDone) / float64(st.BytesTotal)
+	if pct < 0 {
+		pct = 0
+	} else if pct > 1 {
+		pct = 1
+	}
+	filled := min(int(pct*float64(width)), width)
+	return strings.Repeat(full, filled) + strings.Repeat(empty, width-filled)
+}
+
 // View renders the bar as a single styled line:
 //
-//	[profile] [pane] [N selected] [transfer summary] [info] [error] … [? help]
+//	[profile] [pane] [N selected] [transfer segment] [info] [error] … [? help]
 //
 // The info/error middle section is ansi-truncated (from the middle) to
 // whatever width the fixed segments leave over; "? help" is right-aligned.
@@ -207,7 +235,7 @@ func (m Model) View() string {
 	if m.selectedCount > 0 {
 		segs = append(segs, selStyle.Render(fmt.Sprintf("%d selected", m.selectedCount)))
 	}
-	if ts := m.transferSummary(); ts != "" {
+	if ts := m.transferSegment(); ts != "" {
 		segs = append(segs, ts)
 	}
 	left := strings.Join(segs, sep)

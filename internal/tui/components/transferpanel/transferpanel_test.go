@@ -316,3 +316,174 @@ func TestRenderRowShowsProgress(t *testing.T) {
 		t.Fatalf("row %q should contain the status", row)
 	}
 }
+
+// TestStatsBatchAndBytes pins the status-bar snapshot while transfers
+// run: per-direction batch done/total counts, aggregate bytes over the
+// rows with KNOWN totals only (an unknown-total row never poisons the
+// percentage), and a failed row leaving the batch total.
+func TestStatsBatchAndBytes(t *testing.T) {
+	m := NewModel()
+	known := NewProgress()
+	known.Report(50, 200)
+	unknown := NewProgress() // total stays -1
+	m, _ = m.Update(TransferAddMsg{Transfer: Transfer{
+		ID: "u1", Op: OpUpload, Status: StatusRunning, Progress: known,
+	}})
+	m, _ = m.Update(TransferAddMsg{Transfer: Transfer{
+		ID: "u2", Op: OpUpload, Status: StatusRunning, Progress: unknown,
+	}})
+	m, _ = m.Update(TransferAddMsg{Transfer: Transfer{
+		ID: "d1", Op: OpDownload, Status: StatusQueued,
+	}})
+	// A running sync must not join the up/down segment.
+	m, _ = m.Update(TransferAddMsg{Transfer: Transfer{
+		ID: "s1", Op: OpSync, Status: StatusRunning,
+	}})
+
+	st := m.Stats()
+	if st.UpActive != 2 || st.DownActive != 1 {
+		t.Fatalf("active = %d up / %d down, want 2/1", st.UpActive, st.DownActive)
+	}
+	if st.UpTotal != 2 || st.UpDone != 0 || st.DownTotal != 1 || st.DownDone != 0 {
+		t.Fatalf("batch = %+v, want up 0/2, down 0/1", st)
+	}
+	if st.BytesDone != 50 || st.BytesTotal != 200 {
+		t.Fatalf("bytes = %d/%d, want 50/200 (known totals only)", st.BytesDone, st.BytesTotal)
+	}
+
+	// One upload done, the other failed: done counts, failed leaves the
+	// batch, and the failure shows in the ✗ tally.
+	m, _ = m.Update(TransferDoneMsg{ID: "u1", Op: OpUpload})
+	m, _ = m.Update(TransferDoneMsg{ID: "u2", Op: OpUpload, Err: context.DeadlineExceeded})
+	st = m.Stats()
+	if st.UpDone != 1 || st.UpTotal != 1 {
+		t.Fatalf("batch after done+fail = %d/%d, want 1/1", st.UpDone, st.UpTotal)
+	}
+	if st.Failed != 1 {
+		t.Fatalf("failed = %d, want 1", st.Failed)
+	}
+	if st.LifetimeUp != 1 {
+		t.Fatalf("lifetime uploads = %d, want 1 (failures never count)", st.LifetimeUp)
+	}
+
+	// All-unknown totals: the aggregate must flag indeterminate (0 total).
+	m2 := NewModel()
+	m2, _ = m2.Update(TransferAddMsg{Transfer: Transfer{
+		ID: "x", Op: OpDownload, Status: StatusRunning, Progress: NewProgress(),
+	}})
+	if st := m2.Stats(); st.BytesTotal != 0 {
+		t.Fatalf("bytes total = %d with only unknown totals, want 0", st.BytesTotal)
+	}
+}
+
+// TestStatsBytesMonotonicMidBatch pins the aggregate bar's contract: a
+// row turning terminal folds its final bytes into the batch accumulators,
+// so completions/failures mid-burst never move the bar backwards (and a
+// known total finishing never flips the bar indeterminate). The
+// accumulators reset with the batch.
+func TestStatsBytesMonotonicMidBatch(t *testing.T) {
+	m := NewModel()
+	pa, pb := NewProgress(), NewProgress()
+	pa.Report(100, 100)
+	pb.Report(10, 100)
+	m, _ = m.Update(TransferAddMsg{Transfer: Transfer{
+		ID: "a", Op: OpDownload, Status: StatusRunning, Progress: pa,
+	}})
+	m, _ = m.Update(TransferAddMsg{Transfer: Transfer{
+		ID: "b", Op: OpDownload, Status: StatusRunning, Progress: pb,
+	}})
+	if st := m.Stats(); st.BytesDone != 110 || st.BytesTotal != 200 {
+		t.Fatalf("bytes = %d/%d, want 110/200", st.BytesDone, st.BytesTotal)
+	}
+
+	// a completes: its 100/100 must stay in the aggregate, not vanish.
+	m, _ = m.Update(TransferDoneMsg{ID: "a", Op: OpDownload})
+	st := m.Stats()
+	if st.BytesDone != 110 || st.BytesTotal != 200 {
+		t.Fatalf("bytes after done = %d/%d, want 110/200 (no regression)", st.BytesDone, st.BytesTotal)
+	}
+	if st.BytesTotal <= 0 {
+		t.Fatalf("bar flipped indeterminate mid-batch")
+	}
+
+	// b fails at 10/100: it keeps its moved bytes and its remaining 90
+	// leave the denominator (mirroring the row leaving the batch total).
+	m, _ = m.Update(TransferDoneMsg{ID: "b", Op: OpDownload, Err: context.DeadlineExceeded})
+	if st := m.Stats(); st.BytesDone != 110 || st.BytesTotal != 110 {
+		t.Fatalf("bytes after fail = %d/%d, want 110/110", st.BytesDone, st.BytesTotal)
+	}
+
+	// A new burst starts a fresh byte aggregate.
+	pc := NewProgress()
+	pc.Report(0, 50)
+	m, _ = m.Update(TransferAddMsg{Transfer: Transfer{
+		ID: "c", Op: OpUpload, Status: StatusRunning, Progress: pc,
+	}})
+	if st := m.Stats(); st.BytesDone != 0 || st.BytesTotal != 50 {
+		t.Fatalf("bytes after new burst = %d/%d, want 0/50", st.BytesDone, st.BytesTotal)
+	}
+}
+
+// TestStatsBatchResetsOnNewBurst pins the batch lifecycle: once every
+// upload/download is terminal, the next add starts a fresh batch, while
+// the lifetime counters keep accumulating.
+func TestStatsBatchResetsOnNewBurst(t *testing.T) {
+	m := NewModel()
+	m, _ = m.Update(TransferAddMsg{Transfer: Transfer{ID: "a", Op: OpUpload, Status: StatusRunning}})
+	m, _ = m.Update(TransferDoneMsg{ID: "a", Op: OpUpload})
+	if st := m.Stats(); st.UpDone != 1 || st.UpTotal != 1 || st.LifetimeUp != 1 {
+		t.Fatalf("first burst stats = %+v", st)
+	}
+
+	m, _ = m.Update(TransferAddMsg{Transfer: Transfer{ID: "b", Op: OpDownload, Status: StatusRunning}})
+	st := m.Stats()
+	if st.UpDone != 0 || st.UpTotal != 0 || st.DownTotal != 1 {
+		t.Fatalf("second burst must reset the batch, got %+v", st)
+	}
+	if st.LifetimeUp != 1 {
+		t.Fatalf("lifetime uploads = %d after batch reset, want 1", st.LifetimeUp)
+	}
+}
+
+// TestLifetimeCountsSurvivePruningAndCountOnce pins the lifetime
+// counters' contract: they accumulate past maxHistory (the rows they were
+// counted from get pruned), a duplicate TransferDoneMsg never double-
+// counts, and cancellation counts as failed, not done.
+func TestLifetimeCountsSurvivePruningAndCountOnce(t *testing.T) {
+	m := NewModel()
+	for i := 0; i < maxHistory+20; i++ {
+		id := fmt.Sprintf("u%d", i)
+		m, _ = m.Update(TransferAddMsg{Transfer: Transfer{ID: id, Op: OpUpload, Status: StatusRunning}})
+		m, _ = m.Update(TransferDoneMsg{ID: id, Op: OpUpload})
+	}
+	if len(m.transfers) > maxHistory {
+		t.Fatalf("history = %d rows, want <= %d", len(m.transfers), maxHistory)
+	}
+	if st := m.Stats(); st.LifetimeUp != maxHistory+20 {
+		t.Fatalf("lifetime uploads = %d, want %d (must survive pruning)", st.LifetimeUp, maxHistory+20)
+	}
+
+	// A second done message for an already-terminal row is a no-op.
+	m, _ = m.Update(TransferDoneMsg{ID: fmt.Sprintf("u%d", maxHistory+19), Op: OpUpload})
+	if st := m.Stats(); st.LifetimeUp != maxHistory+20 {
+		t.Fatalf("lifetime uploads = %d after duplicate done, want %d", st.LifetimeUp, maxHistory+20)
+	}
+
+	// Canceled transfers never reach the lifetime tallies.
+	ctx, cancel := context.WithCancel(context.Background())
+	m, _ = m.Update(TransferAddMsg{Transfer: Transfer{
+		ID: "c", Op: OpDownload, Status: StatusRunning, Cancel: cancel,
+	}})
+	_ = ctx
+	if ok := m.CancelByID("c"); !ok {
+		t.Fatal("CancelByID failed")
+	}
+	m, _ = m.Update(TransferDoneMsg{ID: "c", Op: OpDownload, Err: context.Canceled})
+	st := m.Stats()
+	if st.LifetimeDown != 0 {
+		t.Fatalf("lifetime downloads = %d after cancel, want 0", st.LifetimeDown)
+	}
+	if st.Failed != 1 {
+		t.Fatalf("failed = %d after cancel, want 1", st.Failed)
+	}
+}

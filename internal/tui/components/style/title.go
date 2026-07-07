@@ -19,7 +19,7 @@ const listTitleReserve = 5
 // title bar always fits on one line of a bubbles list sized to listWidth
 // (the list's INNER width, i.e. list.Model.Width()). Middle truncation
 // keeps both the head (the s3:// bucket / path root) and the tail (the
-// basename and the "[name ↑]" sort suffix) readable. A non-positive
+// basename and the "N selected" suffix) readable. A non-positive
 // listWidth (list not sized yet) returns the title unchanged.
 func FitListTitle(title string, listWidth int) string {
 	if listWidth <= 0 {

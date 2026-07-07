@@ -43,7 +43,7 @@ func TestDoneWithTotalRendersFullBarAnd100(t *testing.T) {
 		Total:  100,
 	}}
 	view := ansi.Strip(m.View(rows))
-	if !strings.Contains(view, "100% done") {
+	if !strings.Contains(view, "] 100%") {
 		t.Fatalf("done row should render 100%%, got:\n%s", view)
 	}
 	if strings.Contains(view, "37%") {
@@ -147,8 +147,11 @@ func TestRunningRowKeepsLiveProgress(t *testing.T) {
 		Total:  100,
 	}}
 	view := ansi.Strip(m.View(rows))
-	if !strings.Contains(view, "25%") || !strings.Contains(view, "running") {
+	if !strings.Contains(view, "25%") {
 		t.Fatalf("running row should render the live percent, got:\n%s", view)
+	}
+	if strings.Contains(view, "100%") {
+		t.Fatalf("running row must not render a terminal state, got:\n%s", view)
 	}
 }
 
@@ -165,7 +168,7 @@ func TestIndeterminateBarAnimatesFromWallClock(t *testing.T) {
 		Status: transferpanel.StatusRunning,
 		Total:  -1,
 	}}
-	if view := ansi.Strip(m.View(rows)); !strings.Contains(view, "█") || !strings.Contains(view, "running") {
+	if view := ansi.Strip(m.View(rows)); !strings.Contains(view, "█") {
 		t.Fatalf("running indeterminate row should render a block bar, got:\n%s", view)
 	}
 	// Adjacent frames always render different bounce positions...
@@ -252,6 +255,101 @@ func TestViewFits80Cols(t *testing.T) {
 	}
 }
 
+// TestTableColumnsAligned pins the table layout: a dim op/progress/file/note
+// header, and every row's columns starting at the same cell offsets no
+// matter how long the label or which state the row is in — at both 80 and
+// 120 cols.
+func TestTableColumnsAligned(t *testing.T) {
+	for _, width := range []int{80, 120} {
+		m := shownModel(width, 24)
+		rows := []transferpanel.Transfer{
+			{
+				ID: "t3", Op: transferpanel.OpDownload,
+				Label:  "s3://bucket/a/very/long/prefix/object-name-that-overflows-every-budget.bin -> ./x",
+				Status: transferpanel.StatusRunning, Done: 25, Total: 100,
+			},
+			{
+				ID: "t2", Op: transferpanel.OpSync, Label: "sync ./d -> s3://b/p",
+				Status: transferpanel.StatusDone, Done: 5, Total: -1, Note: "3 file(s) done",
+			},
+			{
+				ID: "t1", Op: transferpanel.OpUpload, Label: "./f -> s3://b/f",
+				Status: transferpanel.StatusFailed, Err: errors.New("access denied"),
+			},
+		}
+		view := ansi.Strip(m.View(rows))
+		lines := strings.Split(view, "\n")
+
+		var header string
+		var body []string
+		for _, l := range lines {
+			switch {
+			case strings.Contains(l, "op") && strings.Contains(l, "progress") && strings.Contains(l, "file"):
+				header = l
+			case strings.Contains(l, "download") || strings.Contains(l, "sync") || strings.Contains(l, "upload"):
+				body = append(body, l)
+			}
+		}
+		if header == "" {
+			t.Fatalf("width %d: no op/progress/file header row:\n%s", width, view)
+		}
+		if len(body) != 3 {
+			t.Fatalf("width %d: found %d transfer rows, want 3:\n%s", width, len(body), view)
+		}
+		// cellCol converts a substring match to its display-cell offset
+		// (byte indexes drift on multi-byte runes like ▸ and │).
+		cellCol := func(line, sub string) int {
+			i := strings.Index(line, sub)
+			if i < 0 {
+				return -1
+			}
+			return ansi.StringWidth(line[:i])
+		}
+		// The op column must start at the same cell in the header and in
+		// every row (fixed-width marker+glyph column ahead of it).
+		opCol := cellCol(header, "op")
+		for _, ops := range []string{"download", "sync", "upload"} {
+			for _, l := range body {
+				if c := cellCol(l, ops); c >= 0 && c != opCol {
+					t.Errorf("width %d: %q starts at cell %d, header op at %d:\n%s", width, ops, c, opCol, view)
+				}
+			}
+		}
+		// The progress column: every bracket/status word aligns under the
+		// header's "progress".
+		progCol := cellCol(header, "progress")
+		for _, l := range body {
+			c := cellCol(l, "[")
+			if c < 0 {
+				c = cellCol(l, "failed")
+			}
+			if c < 0 {
+				c = cellCol(l, "done ")
+			}
+			if c >= 0 && c != progCol {
+				t.Errorf("width %d: progress cell at %d, header at %d:\n%q", width, c, progCol, l)
+			}
+		}
+		// The failed row's error snippet lands in the note column.
+		noteCol := cellCol(header, "note")
+		if noteCol < 0 {
+			t.Fatalf("width %d: header has no note column:\n%s", width, header)
+		}
+		found := false
+		for _, l := range body {
+			if c := cellCol(l, "access denied"); c >= 0 {
+				found = true
+				if c != noteCol {
+					t.Errorf("width %d: error snippet at cell %d, note header at %d:\n%q", width, c, noteCol, l)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("width %d: failed row's error snippet missing:\n%s", width, view)
+		}
+	}
+}
+
 // TestEmptyAndFooter pins the empty state and the footer legend.
 func TestEmptyAndFooter(t *testing.T) {
 	m := shownModel(100, 20)
@@ -268,5 +366,22 @@ func TestEmptyAndFooter(t *testing.T) {
 	m.Hide()
 	if m.View(nil) != "" {
 		t.Fatal("hidden overlay rendered content")
+	}
+}
+
+// TestPadDoubleWidthTruncation pins that pad always yields exactly w
+// display cells: a truncation landing on a double-width rune produces w-1
+// cells and must be re-padded, or every column after the label shifts left
+// one cell for that row.
+func TestPadDoubleWidthTruncation(t *testing.T) {
+	// The two labels differ in ASCII lead length so one of them straddles
+	// the truncation boundary at any width parity.
+	labels := []string{"中文文件名中文文件名", "a中文文件名中文文件名"}
+	for w := 3; w <= 12; w++ {
+		for _, s := range labels {
+			if got := ansi.StringWidth(pad(s, w)); got != w {
+				t.Errorf("pad(%q, %d) renders %d cells, want %d", s, w, got, w)
+			}
+		}
 	}
 }

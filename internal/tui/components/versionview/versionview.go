@@ -1,11 +1,11 @@
 // Package versionview renders a full-screen overlay listing the version
 // history of a single object (versions and delete markers, newest first).
-// It follows the historyview overlay pattern: the TUI opens it on 'v' over
+// It follows the help overlay pattern: the TUI opens it on 'v' over
 // a highlighted file, swallows every other key while it is visible (except
 // ctrl+c and 'x', which keeps cancelling the latest running transfer), and
 // closes it on esc/'v'.
 //
-// Unlike historyview the overlay keeps a cursor: d/R/D act on the
+// Unlike the help overlay it keeps a cursor: d/R/D act on the
 // highlighted row by returning a tea.Cmd that emits an ActionMsg, which the
 // TUI routes to the matching modal flow (see handler.go). While a modal
 // opened from the overlay is active, the overlay stays open but the modal's
@@ -322,7 +322,7 @@ func renderRow(v s3store.ObjectVersion, selected bool, inner int) string {
 		marker,
 		pad(ShortID(v.VersionID), idW),
 		pad(size, sizeW),
-		pad(v.LastModified.Format("2006-01-02 15:04"), timeW),
+		pad(strutil.LocalTime(v.LastModified), timeW),
 		strings.Join(flags, " "),
 	)
 	return ansi.Truncate(row, inner, "")

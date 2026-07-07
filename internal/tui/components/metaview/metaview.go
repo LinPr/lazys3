@@ -5,7 +5,7 @@
 // probe for prefixes), HeadBucket/GetBucketLocation/GetBucketVersioning for
 // buckets, lstat + owner lookup for local entries, and the shared-config
 // facts for profiles. Empty fields are omitted rather than printed blank.
-// The overlay follows the historyview pattern: the TUI opens it on 'm',
+// The overlay follows the versionview pattern: the TUI opens it on 'm',
 // swallows every other key while it is visible (except ctrl+c), scrolls it
 // with j/k/pgup/pgdown/g/G, and closes it on esc/'m'.
 package metaview

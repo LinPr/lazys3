@@ -8,6 +8,8 @@ import (
 	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/LinPr/lazys3/internal/tui/types"
 )
 
 // press feeds a single key press into the model and drains any resulting
@@ -40,6 +42,32 @@ func drain(m Model, cmd tea.Cmd) Model {
 		m = drain(newModel, cmd)
 	}
 	return m
+}
+
+// pressSort feeds a sort key press and returns the model plus the status
+// bar note (types.InfoMsg) the key emitted, draining filter refreshes
+// like press does.
+func pressSort(m Model, k tea.Key) (Model, string) {
+	newModel, cmd := m.Update(tea.KeyPressMsg(k))
+	note := ""
+	var walk func(tea.Cmd)
+	walk = func(c tea.Cmd) {
+		if c == nil {
+			return
+		}
+		switch msg := c().(type) {
+		case tea.BatchMsg:
+			for _, sub := range msg {
+				walk(sub)
+			}
+		case types.InfoMsg:
+			note = msg.Text
+		case list.FilterMatchesMsg:
+			newModel, _ = newModel.Update(msg)
+		}
+	}
+	walk(cmd)
+	return newModel, note
 }
 
 func visibleNames(m Model) []string {
@@ -97,26 +125,33 @@ func TestCycleSortFieldAndDirection(t *testing.T) {
 	m.SetSize(80, 20)
 	m.SetObjects(sampleObjects())
 
-	// o -> size ascending, dirs still first.
-	m = press(m, tea.Key{Code: 'o', Text: "o"})
+	// o -> size ascending, dirs still first. The sort mode is announced
+	// as a status-bar note, never in the title.
+	m, note := pressSort(m, tea.Key{Code: 'o', Text: "o"})
 	mustEqual(t, visibleNames(m),
 		[]string{"data/", "logs/", "zeta.txt", "mid.txt", "Alpha.txt"})
-	if !strings.Contains(m.objectlist.Title, "size ↑") {
-		t.Errorf("title should show 'size ↑', got %q", m.objectlist.Title)
+	if note != "sort: size ↑" {
+		t.Errorf("'o' note = %q, want 'sort: size ↑'", note)
+	}
+	if strings.Contains(m.objectlist.Title, "size") || strings.Contains(m.objectlist.Title, "[") {
+		t.Errorf("title must not carry a sort suffix, got %q", m.objectlist.Title)
 	}
 
 	// O -> size descending, dirs still first.
-	m = press(m, tea.Key{Code: 'O', Text: "O"})
+	m, note = pressSort(m, tea.Key{Code: 'O', Text: "O"})
 	mustEqual(t, visibleNames(m),
 		[]string{"logs/", "data/", "Alpha.txt", "mid.txt", "zeta.txt"})
-	if !strings.Contains(m.objectlist.Title, "size ↓") {
-		t.Errorf("title should show 'size ↓', got %q", m.objectlist.Title)
+	if note != "sort: size ↓" {
+		t.Errorf("'O' note = %q, want 'sort: size ↓'", note)
 	}
 
 	// o -> time descending (direction persists across field change).
-	m = press(m, tea.Key{Code: 'o', Text: "o"})
+	m, note = pressSort(m, tea.Key{Code: 'o', Text: "o"})
 	mustEqual(t, visibleNames(m),
 		[]string{"logs/", "data/", "zeta.txt", "mid.txt", "Alpha.txt"})
+	if note != "sort: time ↓" {
+		t.Errorf("second 'o' note = %q, want 'sort: time ↓'", note)
+	}
 }
 
 func TestSortPersistsAcrossSetObjects(t *testing.T) {
@@ -372,20 +407,50 @@ func TestLoadingStateInEmptyView(t *testing.T) {
 func TestColumnsWide(t *testing.T) {
 	m := NewModel()
 	m.SetSize(100, 20)
+	utc := time.Date(2024, 3, 1, 10, 30, 0, 0, time.UTC)
 	m.SetObjects([]Object{
 		{name: "dir/", isDir: true},
 		{
 			name:         "report.txt",
 			size:         1536,
-			modTime:      time.Date(2024, 3, 1, 10, 30, 0, 0, time.UTC),
+			modTime:      utc,
 			storageClass: "STANDARD",
 		},
 	})
 	out := ansi.Strip(m.View())
-	for _, want := range []string{"1.5K", "2024-03-01 10:30", "STD", "dir/"} {
+	// The mtime column renders the UTC SDK timestamp as local wall clock.
+	for _, want := range []string{"1.5K", utc.Local().Format("2006-01-02 15:04"), "STD", "dir/"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("wide view should contain %q, got:\n%s", want, out)
 		}
+	}
+}
+
+// TestMtimeRendersInLocalTimezone pins the timezone fix: an S3 UTC
+// timestamp renders as its LOCAL equivalent, never raw UTC. Run under a
+// fixed non-UTC TZ so the assertion bites on any machine.
+func TestMtimeRendersInLocalTimezone(t *testing.T) {
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		t.Skipf("tzdata unavailable: %v", err)
+	}
+	prev := time.Local
+	time.Local = loc
+	t.Cleanup(func() { time.Local = prev })
+
+	m := NewModel()
+	m.SetSize(100, 20)
+	m.SetObjects([]Object{{
+		name:    "report.txt",
+		size:    1,
+		modTime: time.Date(2024, 3, 1, 22, 30, 0, 0, time.UTC),
+	}})
+	out := ansi.Strip(m.View())
+	if !strings.Contains(out, "2024-03-02 06:30") {
+		t.Errorf("mtime should render UTC 22:30 as +08:00 next-day 06:30, got:\n%s", out)
+	}
+	if strings.Contains(out, "2024-03-01 22:30") {
+		t.Errorf("mtime column still renders raw UTC:\n%s", out)
 	}
 }
 
@@ -490,10 +555,14 @@ func TestTitleFitsNarrowPane(t *testing.T) {
 	m.SetTitle(longBase)
 	m.SetObjects(sampleObjects())
 	assertFits(t, m, 40, 20)
-	// Middle truncation keeps the head of the URI and the sort suffix.
+	// Middle truncation keeps the head of the URI readable and never
+	// smuggles a sort suffix back in.
 	out := ansi.Strip(m.View())
-	if !strings.Contains(out, "s3://") || !strings.Contains(out, "↑]") {
-		t.Errorf("truncated title lost its head or sort suffix:\n%s", out)
+	if !strings.Contains(out, "s3://") || !strings.Contains(out, "…") {
+		t.Errorf("truncated title lost its head or its ellipsis:\n%s", out)
+	}
+	if strings.Contains(out, "↑]") || strings.Contains(out, "↓]") {
+		t.Errorf("title carries a sort suffix again:\n%s", out)
 	}
 
 	// A title set wide and then shrunk must be re-fit by SetSize.
@@ -510,4 +579,32 @@ func TestTitleFitsNarrowPane(t *testing.T) {
 		t.Error("growing the pane did not restore the full title")
 	}
 	assertFits(t, m2, 100, 20)
+}
+
+// TestStaleFetchResultDropped pins the generation guard: a listing from a
+// superseded Fetch is dropped (and does not clear the newer fetch's
+// loading state), while the current generation's result applies. Unstamped
+// results (Gen 0, a bare FetchObjectListCmd) always apply.
+func TestStaleFetchResultDropped(t *testing.T) {
+	m := NewModel()
+	m.SetSize(80, 20)
+	_ = m.Fetch(Option{S3Uri: "s3://old/"}) // gen 1
+	_ = m.Fetch(Option{S3Uri: "s3://new/"}) // gen 2 supersedes gen 1
+
+	m, _ = m.Update(FetchObjectListResultMsg{Gen: 1, Objects: []Object{{name: "stale.txt"}}})
+	if names := visibleNames(m); len(names) != 0 {
+		t.Fatalf("stale gen-1 result applied: %v", names)
+	}
+	if !m.Loading() {
+		t.Fatal("stale result cleared the current fetch's loading state")
+	}
+
+	m, _ = m.Update(FetchObjectListResultMsg{Gen: 2, Objects: []Object{{name: "fresh.txt"}}})
+	mustEqual(t, visibleNames(m), []string{"fresh.txt"})
+	if m.Loading() {
+		t.Fatal("current-generation result did not clear loading")
+	}
+
+	m, _ = m.Update(FetchObjectListResultMsg{Objects: []Object{{name: "plain.txt"}}})
+	mustEqual(t, visibleNames(m), []string{"plain.txt"})
 }

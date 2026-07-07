@@ -50,9 +50,10 @@ var claimedKeys = []struct {
 	{key: "tab"},
 	// Panels, transfers, overlays
 	{key: "t"},
-	{key: "T"},
 	{key: "x"},
 	{key: "?"},
+	// Goto (lists) / jump-to-top (overlays)
+	{key: "g"},
 	// Overlay scrolling
 	{key: "j"},
 	{key: "k"},
@@ -100,6 +101,13 @@ var paneGroups = map[string]bool{
 	"Local pane":       true,
 }
 
+// overlayScrollKeys are keys that legitimately appear in the Overlays group
+// ON TOP of their pane-group entries: overlays swallow keys first, so 'g'
+// means jump-to-top there and goto-path in the lists.
+var overlayScrollKeys = map[string]bool{
+	"g": true,
+}
+
 // tokenGroups maps each key-column token to the set of group names that
 // document it, using the same tokenization as keyTokens.
 func tokenGroups(groups []Group) map[string]map[string]bool {
@@ -137,9 +145,13 @@ func TestHelpDocumentsKeysExactlyOnce(t *testing.T) {
 		if len(groups) == 1 {
 			continue
 		}
-		allPane := len(groups) <= len(paneGroups)
+		limit := len(paneGroups)
+		if overlayScrollKeys[tok] {
+			limit++
+		}
+		allPane := len(groups) <= limit
 		for g := range groups {
-			if !paneGroups[g] {
+			if !paneGroups[g] && !(overlayScrollKeys[tok] && g == "Overlays") {
 				allPane = false
 			}
 		}

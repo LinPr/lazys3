@@ -1,6 +1,31 @@
 package strutil
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
+
+// TestLocalTime pins the timezone conversion: a fixed UTC instant renders
+// as its LOCAL equivalent (the expectation is built with .Local() so the
+// test is deterministic on any machine), and a +08:00 zone crosses the day
+// boundary correctly.
+func TestLocalTime(t *testing.T) {
+	utc := time.Date(2026, 7, 6, 22, 30, 0, 0, time.UTC)
+	if got, want := LocalTime(utc), utc.Local().Format("2006-01-02 15:04"); got != want {
+		t.Errorf("LocalTime(%v) = %q, want %q", utc, got, want)
+	}
+
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		t.Skipf("tzdata unavailable: %v", err)
+	}
+	prev := time.Local
+	time.Local = loc
+	defer func() { time.Local = prev }()
+	if got, want := LocalTime(utc), "2026-07-07 06:30"; got != want {
+		t.Errorf("LocalTime under +08:00 = %q, want %q", got, want)
+	}
+}
 
 func TestCapitalizeFirstLetter(t *testing.T) {
 	tests := []struct {

@@ -76,6 +76,7 @@ func NewModel() Model {
 	selected := make(map[string]bool)
 	delegate := newSelectDelegate(&selected)
 	l := list.New(items, delegate, 0, 0)
+	l.Styles.Title = style.ListTitleStyle(true)
 	l.Filter = filter.Substring
 	l.DisableQuitKeybindings()
 	l.KeyMap.PrevPage = key.NewBinding(
@@ -125,11 +126,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		if !m.Filtering() {
+			// The sort keys announce the new mode on the status bar (the
+			// title no longer carries a sort suffix).
 			switch keybinding.KeyString(msg.String()) {
 			case keybinding.ObjectSortCycle:
-				return m, m.CycleSortField()
+				return m, tea.Batch(m.CycleSortField(), m.sortInfoCmd())
 			case keybinding.ObjectSortReverse:
-				return m, m.ToggleSortDirection()
+				return m, tea.Batch(m.ToggleSortDirection(), m.sortInfoCmd())
 			}
 		}
 	}
@@ -175,8 +178,11 @@ func (m Model) GetSize() (width, height int) {
 }
 
 // SetFocused marks the pane as owning list-navigation keys; View picks
-// the border color from it.
-func (m *Model) SetFocused(v bool) { m.focused = v }
+// the border color from it and the title bar dims when unfocused.
+func (m *Model) SetFocused(v bool) {
+	m.focused = v
+	m.list.Styles.Title = style.ListTitleStyle(v)
+}
 
 // Focused reports whether the pane is focused.
 func (m Model) Focused() bool { return m.focused }
@@ -257,6 +263,19 @@ func (m *Model) Up() tea.Cmd {
 	return m.fetch(parent)
 }
 
+// GoTo arms a fetch of an arbitrary directory (the 'g' goto flow),
+// memoising the current cursor like Enter/Up. The navigation commits only
+// when the LoadedMsg arrives with Err==nil, so a nonexistent or unreadable
+// target keeps the current listing (the error surfaces on the status bar).
+func (m *Model) GoTo(dir string) tea.Cmd {
+	if dir == "" {
+		return nil
+	}
+	m.rememberPosition(m.dir)
+	m.pendingRestore = dir
+	return m.fetch(dir)
+}
+
 // Refresh re-fetches the current directory, keeping the cursor position
 // via the pending restore.
 func (m *Model) Refresh() tea.Cmd {
@@ -297,21 +316,29 @@ func (m Model) Filtering() bool {
 	return m.list.SettingFilter()
 }
 
-// refreshTitle recomposes the visible title from the current directory,
-// the active sort mode and the selection count. The result is middle-
-// truncated to the list's inner width so a deep path never word-wraps the
-// title bar onto a second line (which would push every row down and
-// misalign the panes in dual-pane mode).
+// refreshTitle recomposes the visible title from the current directory
+// and the selection count (the sort mode is announced on the status bar
+// instead of cluttering the title). The result is middle-truncated to the
+// list's inner width so a deep path never word-wraps the title bar onto a
+// second line (which would push every row down and misalign the panes in
+// dual-pane mode).
 func (m *Model) refreshTitle() {
-	base := m.dir
-	if base == "" {
-		base = "local"
+	title := m.dir
+	if title == "" {
+		title = "local"
 	}
-	title := fmt.Sprintf("%s  [%s]", base, m.SortStatus())
 	if n := len(m.selected); n > 0 {
 		title = fmt.Sprintf("%s  %d selected", title, n)
 	}
 	m.list.Title = style.FitListTitle(title, m.list.Width())
+}
+
+// sortInfoCmd emits the status-bar note announcing the active sort mode
+// ("sort: name ↑"). Built after the sort mutators ran, so it snapshots
+// the NEW mode.
+func (m *Model) sortInfoCmd() tea.Cmd {
+	note := "sort: " + m.SortStatus()
+	return func() tea.Msg { return types.InfoMsg{Text: note} }
 }
 
 // setEntries replaces the listing after a successful load: the selection

@@ -174,7 +174,7 @@ type dirSync struct {
 
 // dirSyncCmds turns the specs into sync transfer rows with the full
 // syncmodal wiring (cancellable ctx, 200ms poll loop, files-done note,
-// summary note, history record).
+// summary note).
 func dirSyncCmds(specs []dirSync, conn connParams) []tea.Cmd {
 	cmds := make([]tea.Cmd, 0, len(specs))
 	for _, d := range specs {

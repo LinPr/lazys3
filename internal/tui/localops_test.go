@@ -67,7 +67,6 @@ func typeInModal(t *testing.T, m Model, s string) Model {
 // selection cleared once the done message lands.
 func TestLocalDeleteFileFlow(t *testing.T) {
 	m, dir := dualModel(t, "a.txt", "b.txt")
-	m.historyStore = nil // keep the test away from the real history file
 	m = updateModel(t, m, tabPress())
 
 	m = updateModel(t, m, keyPress('D'))
@@ -124,7 +123,6 @@ func TestLocalDeleteFileFlow(t *testing.T) {
 // the whole tree.
 func TestLocalDeleteDirRecursiveModal(t *testing.T) {
 	m, dir := dualModel(t, "keep.txt")
-	m.historyStore = nil
 	sub := filepath.Join(dir, "sub")
 	if err := os.MkdirAll(sub, 0o755); err != nil {
 		t.Fatal(err)
@@ -229,9 +227,12 @@ func TestLocalRenameRejectsSeparatorsAndMultiSelect(t *testing.T) {
 		t.Fatalf("a.txt must be untouched: %v", err)
 	}
 
-	// Multi-selection: status-bar error, no modal.
+	// Multi-selection: status-bar error, no modal. Space no longer
+	// advances the cursor, so move down explicitly between toggles.
 	space := tea.KeyPressMsg(tea.Key{Code: tea.KeySpace, Text: " "})
+	down := tea.KeyPressMsg(tea.Key{Code: tea.KeyDown})
 	m = updateModel(t, m, space)
+	m = updateModel(t, m, down)
 	m = updateModel(t, m, space)
 	if m.localList.SelectedCount() != 2 {
 		t.Fatalf("selection = %d, want 2", m.localList.SelectedCount())
@@ -362,7 +363,6 @@ func TestLocalMkdirRejectsEscape(t *testing.T) {
 // never as a recursive directory delete.
 func TestLocalDeleteSymlinkConfirmText(t *testing.T) {
 	m, dir := dualModel(t)
-	m.historyStore = nil
 	target := filepath.Join(dir, "real")
 	if err := os.Mkdir(target, 0o755); err != nil {
 		t.Fatal(err)
@@ -406,10 +406,11 @@ func TestLocalDeletePartialFailureCount(t *testing.T) {
 		t.Skip("running as root; permission bits are not enforced")
 	}
 	m, dir := dualModel(t, "f1.txt", "f2.txt")
-	m.historyStore = nil
 	m = updateModel(t, m, tabPress())
+	// Space no longer advances the cursor; move down between toggles.
 	space := tea.KeyPressMsg(tea.Key{Code: tea.KeySpace, Text: " "})
 	m = updateModel(t, m, space)
+	m = updateModel(t, m, tea.KeyPressMsg(tea.Key{Code: tea.KeyDown}))
 	m = updateModel(t, m, space)
 	if m.localList.SelectedCount() != 2 {
 		t.Fatalf("selection = %d, want 2", m.localList.SelectedCount())

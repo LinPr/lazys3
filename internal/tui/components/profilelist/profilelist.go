@@ -49,6 +49,7 @@ func NewModelWithFiles(files appcfg.AWSFiles) Model {
 		delegate.Styles.SelectedDesc = delegate.Styles.SelectedDesc.BorderForeground(c)
 	}
 	profileList := list.New(items, delegate, 0, 0)
+	profileList.Styles.Title = style.ListTitleStyle(true)
 	profileList.Filter = filter.Substring
 	profileList.Title = ProfileListTitle
 	profileList.DisableQuitKeybindings()
@@ -114,9 +115,13 @@ func (m Model) View() string {
 }
 
 // SetFocused marks the pane as owning list-navigation keys (dual-pane
-// mode); View picks the border color from it. Constructors default to
-// focused so single-pane rendering is unchanged.
-func (m *Model) SetFocused(v bool) { m.focused = v }
+// mode); View picks the border color from it and the title bar dims when
+// unfocused. Constructors default to focused so single-pane rendering is
+// unchanged.
+func (m *Model) SetFocused(v bool) {
+	m.focused = v
+	m.profileList.Styles.Title = style.ListTitleStyle(v)
+}
 
 // Focused reports whether the pane is focused.
 func (m Model) Focused() bool { return m.focused }

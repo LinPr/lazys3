@@ -49,11 +49,14 @@ type ShowInputModalMsg struct {
 }
 
 // StatusUpdateMsg refreshes the persistent status bar with the current
-// navigation context, the focused pane, the multi-select count and the
-// transfer-row tallies. The TUI's Update emits this after dispatching to
-// the active list so the bar always reflects the post-update state; it is
-// deduplicated against the previous emission, so every field except
-// ClearInfo participates in change detection.
+// navigation context, the focused pane and the multi-select count. The
+// TUI's Update emits this after dispatching to the active list so the bar
+// always reflects the post-update state; it is deduplicated against the
+// previous emission, so every field except ClearInfo participates in
+// change detection. Transfer state deliberately does NOT travel here: it
+// changes on every 200ms tick, which would either defeat the dedup (an
+// infinite self-perpetuating emit loop) or go stale — the bar pulls a
+// TransferStats snapshot on the render path instead.
 //
 // Track D owns this message type; the statusbar component is the only
 // consumer.
@@ -67,15 +70,54 @@ type StatusUpdateMsg struct {
 	// Pane names the focused pane while dual-pane mode is active
 	// ("local" / "remote"); empty in single-pane mode.
 	Pane string
-	// Transfer-row tallies from transferpanel.Counts: running includes
-	// queued rows, failed includes canceled ones.
-	TransfersRunning int
-	TransfersDone    int
-	TransfersFailed  int
 	// ClearInfo dismisses the bar's transient info note. emitStatusUpdate
 	// sets it only when a navigation-ish field (profile/bucket/prefix/
 	// selection/pane) changed, so a background transfer finishing never
 	// wipes a note the user is still reading. Set AFTER the dedup
 	// snapshot, so it never participates in change detection.
 	ClearInfo bool
+}
+
+// InfoMsg sets the status bar's transient info note from a component's
+// tea.Cmd (e.g. the o/O sort keys announcing the new sort mode). It keeps
+// the note's existing lifecycle: the next navigation-ish StatusUpdateMsg
+// (ClearInfo) dismisses it.
+type InfoMsg struct {
+	Text string
+}
+
+// TransferStats is the snapshot the status bar's transfer segment renders
+// from. tui.go pulls it from transferpanel.Stats() on the RENDER path
+// (composeView), never through the deduped StatusUpdateMsg — the byte
+// counters move on every 200ms tick, and every Update pass ends in a
+// render, so the segment stays live without any extra message traffic.
+type TransferStats struct {
+	// Active upload/download rows (queued or running). The progress bar
+	// and the per-direction batch counts render while either is > 0.
+	UpActive   int
+	DownActive int
+	// Current-batch tallies: total counts every upload/download queued
+	// since the batch began (a batch starts when a transfer is added
+	// while none was active), done counts the completed ones. Failed and
+	// canceled rows leave the batch total.
+	UpDone    int
+	UpTotal   int
+	DownDone  int
+	DownTotal int
+	// Aggregate byte progress over the current batch's upload/download
+	// rows whose total is known: live bytes from the active rows plus the
+	// folded final bytes of rows already terminal, so the bar never moves
+	// backwards when one transfer of a burst completes. BytesTotal == 0
+	// means no such row knows its total (render an indeterminate bar).
+	BytesDone  int64
+	BytesTotal int64
+	// Lifetime completed-transfer counts, accumulated over the whole
+	// program run and never reset (they survive the panel's row pruning).
+	LifetimeUp   int
+	LifetimeDown int
+	// Failed counts the panel's failed+canceled rows (any op), rendered
+	// as the ✗ tally.
+	Failed int
+	// Frame is the panel's tick frame, driving the indeterminate bounce.
+	Frame int
 }

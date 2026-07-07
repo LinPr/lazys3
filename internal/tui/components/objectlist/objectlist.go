@@ -52,6 +52,13 @@ type Model struct {
 	posMemo        map[string]int
 	memoKeys       []string
 	pendingRestore string
+
+	// fetchGen guards against stale in-flight loads: every Fetch bumps
+	// the counter and stamps it onto the resulting msg, and Update drops
+	// results whose generation was superseded (bubbletea runs cmds
+	// concurrently, so a slow listing for a previous bucket/prefix can
+	// land after a newer navigation blanked the list).
+	fetchGen int
 }
 
 // NewModel constructs an empty object list with the custom select-aware
@@ -67,6 +74,7 @@ func NewModel() Model {
 	selected := make(map[string]bool)
 	delegate := newSelectDelegate(&selected)
 	objectlist := list.New(items, delegate, 0, 0)
+	objectlist.Styles.Title = style.ListTitleStyle(true)
 	objectlist.Filter = substringFilter
 	objectlist.DisableQuitKeybindings()
 	objectlist.KeyMap.PrevPage = key.NewBinding(
@@ -95,6 +103,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case FetchObjectListResultMsg:
 		log.Println("objectlist got FetchObjectListResultMsg, err=", msg.Err, "count=", len(msg.Objects))
+		if msg.Gen != 0 && msg.Gen != m.fetchGen {
+			// A later navigation superseded this fetch; drop it (the
+			// current-generation fetch owns the loading state).
+			return m, nil
+		}
 		m.SetLoading(false)
 		objects, err := msg.Objects, msg.Err
 		if err != nil {
@@ -111,11 +124,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		if !m.Filtering() {
+			// The sort keys announce the new mode on the status bar (the
+			// title no longer carries a sort suffix).
 			switch keybinding.KeyString(msg.String()) {
 			case keybinding.ObjectSortCycle:
-				return m, m.CycleSortField()
+				return m, tea.Batch(m.CycleSortField(), m.sortInfoCmd())
 			case keybinding.ObjectSortReverse:
-				return m, m.ToggleSortDirection()
+				return m, tea.Batch(m.ToggleSortDirection(), m.sortInfoCmd())
 			}
 		}
 	}
@@ -141,9 +156,13 @@ func (m Model) View() string {
 }
 
 // SetFocused marks the pane as owning list-navigation keys (dual-pane
-// mode); View picks the border color from it. Constructors default to
-// focused so single-pane rendering is unchanged.
-func (m *Model) SetFocused(v bool) { m.focused = v }
+// mode); View picks the border color from it and the title bar dims when
+// unfocused. Constructors default to focused so single-pane rendering is
+// unchanged.
+func (m *Model) SetFocused(v bool) {
+	m.focused = v
+	m.objectlist.Styles.Title = style.ListTitleStyle(v)
+}
 
 // Focused reports whether the pane is focused.
 func (m Model) Focused() bool { return m.focused }
@@ -163,28 +182,52 @@ func (m *Model) SetLoading(v bool) {
 // Loading reports whether a fetch is in flight.
 func (m Model) Loading() bool { return m.loading }
 
+// Fetch arms a generation-guarded listing fetch: the counter is bumped and
+// stamped onto the result so Update can drop listings that a later
+// navigation superseded (e.g. a slow fetch for the previous bucket landing
+// after a goto switched to a new one). All navigation dispatches go
+// through here.
+func (m *Model) Fetch(o Option) tea.Cmd {
+	m.fetchGen++
+	gen := m.fetchGen
+	m.SetLoading(true)
+	inner := FetchObjectListCmd(o)
+	return func() tea.Msg {
+		msg := inner().(FetchObjectListResultMsg)
+		msg.Gen = gen
+		return msg
+	}
+}
+
 // SetTitle sets the base list title (the s3:// URI). The rendered title
-// also carries the active sort mode and the selection count.
+// also carries the selection count.
 func (m *Model) SetTitle(title string) {
 	m.baseTitle = title
 	m.refreshTitle()
 }
 
-// refreshTitle recomposes the visible title from the base title, the
-// active sort mode and the selection count. The result is middle-truncated
-// to the list's inner width so the title bar never word-wraps onto a
-// second line (which would push every row down and misalign the panes in
-// dual-pane mode).
+// refreshTitle recomposes the visible title from the base title and the
+// selection count (the sort mode is announced on the status bar instead
+// of cluttering the title). The result is middle-truncated to the list's
+// inner width so the title bar never word-wraps onto a second line (which
+// would push every row down and misalign the panes in dual-pane mode).
 func (m *Model) refreshTitle() {
-	base := m.baseTitle
-	if base == "" {
-		base = "objects"
+	title := m.baseTitle
+	if title == "" {
+		title = "objects"
 	}
-	title := fmt.Sprintf("%s  [%s]", base, m.SortStatus())
 	if n := len(m.selected); n > 0 {
 		title = fmt.Sprintf("%s  %d selected", title, n)
 	}
 	m.objectlist.Title = style.FitListTitle(title, m.objectlist.Width())
+}
+
+// sortInfoCmd emits the status-bar note announcing the active sort mode
+// ("sort: name ↑"). Built after the sort mutators ran, so it snapshots
+// the NEW mode.
+func (m *Model) sortInfoCmd() tea.Cmd {
+	note := "sort: " + m.SortStatus()
+	return func() tea.Msg { return types.InfoMsg{Text: note} }
 }
 
 // SetObjects replaces the listing. This means the content changed (new

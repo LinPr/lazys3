@@ -13,7 +13,8 @@ A terminal UI for browsing and operating S3-compatible object storage (AWS S3, A
 - Multi-profile: picks up every profile from `~/.aws/config` / `~/.aws/credentials`, including custom `endpoint_url` for S3-compatible services (MinIO, Aliyun OSS, Tencent COS, Ceph, ...)
 - Path-style addressing is detected automatically: AWS S3 and Aliyun OSS use virtual-host style, every other custom endpoint gets path-style (OSS rejects path-style, so it is special-cased)
 - Navigate profiles → buckets → objects with `enter`/`backspace` (or arrow keys); prefixes behave like directories
-- Preview panel (`p`) for the highlighted object
+- Content preview (`p`): floating overlay with the first 256 KiB of the highlighted file (ranged fetch for S3 objects), scrollable, with binary- and empty-file detection
+- Metadata overlay (`m`): every populated field of the highlighted item — full `HeadObject` for S3 objects (content type, ETag, storage class, user metadata, SSE, checksums, ...), region/versioning for buckets, path/permissions/owner/timestamps/symlink target for local entries, config paths for profiles
 - Filter (`/`), sort by name/size/time (`o`/`O`), and multi-select (`space`, `a`) in every list
 
 **Transfer**
@@ -60,10 +61,11 @@ Press `?` inside lazys3 to see this list as a scrollable overlay.
 | `x` | cancel the most recent running transfer (transfers overlay: the highlighted one) |
 | `l` | toggle dual-pane layout (local ⇄ remote, needs ≥80 cols) |
 | `tab` | switch focus between remote and local panes (dual-pane) |
-| `p` | toggle preview panel (dual-pane: replaces the unfocused pane) |
+| `p` | preview file content (floating overlay, first 256 KiB) |
+| `m` | object/file metadata (floating overlay; buckets and profiles too) |
 | `enter` / `→` | open selected (profile → buckets → objects) |
 | `backspace` / `←` | go back one level |
-| `↑`/`k`, `↓`/`j` | move the list cursor (also scrolls the `?`/`t`/`T`/`v` overlays) |
+| `↑`/`k`, `↓`/`j` | move the list cursor (also scrolls the `?`/`t`/`T`/`v`/`p`/`m` overlays) |
 
 ### Remote pane (S3)
 
@@ -109,7 +111,7 @@ Press `?` inside lazys3 to see this list as a scrollable overlay.
 | Key | Action |
 |---|---|
 | `pgup` / `pgdn` | scroll one page |
-| `g` / `G` | jump to top / bottom (help and transfers overlays) |
+| `g` / `G` | jump to top / bottom (help, transfers, preview, metadata) |
 | `esc` | close the overlay (lists: clear filter; modal: cancel) |
 
 ## Install
@@ -196,28 +198,10 @@ Notes:
 - `local.start_dir` accepts `~` and relative paths (resolved against the launch directory); it must be an existing directory or it is ignored.
 - `ui.transfer_panel_height` from older versions is deprecated and ignored — the bottom transfer panel was replaced by the full-screen transfers overlay (`t`). Old config files still load without error.
 
-## Testing
-
-```sh
-task test-unit                      # unit tests (excludes e2e)
-task test-e2e                       # e2e tests against an in-process gofakes3 server
-LAZYS3_E2E_REAL=oss task test-e2e   # e2e against a real endpoint, using that ~/.aws profile
-```
-
-Without `task`: `go test $(go list ./... | grep -v /e2e)` and `go test -tags=e2e ./e2e/...`.
-
-### Regenerating the demo GIF
-
-The demo is recorded against a seeded in-memory S3 server (`cmd/demosrv`, listens on `127.0.0.1:19093`) by `docs/demo/record.py`, which drives the TUI in a pty and writes an asciinema v2 cast:
-
-```sh
-go run ./cmd/demosrv &
-python3 docs/demo/record.py     # writes /tmp/demo.cast
-agg /tmp/demo.cast docs/demo.gif
-```
-
-The script expects the lazys3 binary at `/tmp/lazys3-demo` and a prepared demo `$HOME` under `/tmp/demo-home` (with an `~/.aws` profile pointing at the demo server) — see the top of `record.py` for details.
-
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+---
+
+Contributing / development (build, tests, demo GIF): [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)

@@ -13,7 +13,8 @@
 - 多 Profile：自动读取 `~/.aws/config` / `~/.aws/credentials` 中的全部 profile，支持自定义 `endpoint_url` 接入 S3 兼容服务（MinIO、阿里云 OSS、腾讯云 COS、Ceph 等）
 - 自动选择寻址方式：AWS S3 与阿里云 OSS 使用 virtual-host 风格，其余自定义 endpoint 一律使用 path-style（OSS 不接受 path-style，因此做了特判）
 - 使用 `enter`/`backspace`（或方向键）在 profile → bucket → 对象之间逐级导航，前缀（prefix）表现得像目录
-- 预览面板（`p`）查看当前高亮对象
+- 内容预览（`p`）：浮动浮层显示高亮文件的前 256 KiB（S3 对象按 Range 拉取），可滚动，自动识别二进制文件和空文件
+- 元数据浮层（`m`）：显示高亮条目的全部非空字段 —— S3 对象为完整 `HeadObject`（Content-Type、ETag、存储类型、用户元数据、SSE、校验和等），bucket 为地域/版本控制状态，本地条目为路径/权限/属主/时间戳/软链接目标，profile 为配置文件路径
 - 每个列表都支持过滤（`/`）、按名称/大小/时间排序（`o`/`O`）和多选（`space`、`a`）
 
 **传输**
@@ -60,10 +61,11 @@
 | `x` | 取消最近一个正在运行的传输（传输浮层内：取消高亮的那个） |
 | `l` | 开关双栏布局（本地 ⇄ 远端，需要 ≥80 列） |
 | `tab` | 在远端栏和本地栏之间切换焦点（双栏模式） |
-| `p` | 开关预览面板（双栏模式下替换未聚焦的一栏） |
+| `p` | 预览文件内容（浮动浮层，前 256 KiB） |
+| `m` | 对象/文件元数据（浮动浮层；也支持 bucket 和 profile） |
 | `enter` / `→` | 打开选中项（profile → bucket → 对象） |
 | `backspace` / `←` | 返回上一级 |
-| `↑`/`k`、`↓`/`j` | 移动列表光标（也用于滚动 `?`/`t`/`T`/`v` 浮层） |
+| `↑`/`k`、`↓`/`j` | 移动列表光标（也用于滚动 `?`/`t`/`T`/`v`/`p`/`m` 浮层） |
 
 ### 远端栏（S3）
 
@@ -109,7 +111,7 @@
 | 按键 | 作用 |
 |---|---|
 | `pgup` / `pgdn` | 翻页 |
-| `g` / `G` | 跳到顶部 / 底部（帮助和传输浮层） |
+| `g` / `G` | 跳到顶部 / 底部（帮助、传输、预览、元数据浮层） |
 | `esc` | 关闭浮层（列表：清除过滤；弹窗：取消） |
 
 ## 安装
@@ -196,28 +198,10 @@ lazys3 读取 `$XDG_CONFIG_HOME/lazys3/config.toml`（默认 `~/.config/lazys3/c
 - `local.start_dir` 支持 `~` 和相对路径（相对启动目录解析）；必须是已存在的目录，否则会被忽略。
 - 旧版本的 `ui.transfer_panel_height` 已废弃且被忽略 —— 底部传输面板已被全屏传输浮层（`t`）取代。旧配置文件仍可正常加载。
 
-## 测试
-
-```sh
-task test-unit                      # 单元测试（不含 e2e）
-task test-e2e                       # e2e 测试，跑在进程内的 gofakes3 上
-LAZYS3_E2E_REAL=oss task test-e2e   # e2e 测试跑在真实服务上，使用 ~/.aws 中对应的 profile
-```
-
-不使用 `task` 时：`go test $(go list ./... | grep -v /e2e)` 和 `go test -tags=e2e ./e2e/...`。
-
-### 重新录制演示 GIF
-
-演示是在一个预置数据的内存 S3 服务（`cmd/demosrv`，监听 `127.0.0.1:19093`）上录制的，由 `docs/demo/record.py` 在 pty 中驱动 TUI 并输出 asciinema v2 cast 文件：
-
-```sh
-go run ./cmd/demosrv &
-python3 docs/demo/record.py     # 生成 /tmp/demo.cast
-agg /tmp/demo.cast docs/demo.gif
-```
-
-脚本要求 lazys3 二进制位于 `/tmp/lazys3-demo`，并准备好 `/tmp/demo-home` 演示用 `$HOME`（其中的 `~/.aws` profile 指向演示服务）—— 详见 `record.py` 文件头部说明。
-
 ## 许可证
 
 MIT —— 见 [LICENSE](LICENSE)。
+
+---
+
+参与开发（构建、测试、演示 GIF 录制，英文）：[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)

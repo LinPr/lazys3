@@ -17,16 +17,18 @@ COLS, ROWS = 100, 30
 
 # (delay_before_seconds, keys) — keys are written raw to the pty.
 SCRIPT = [
+    # (regenerate with: go run ./cmd/demosrv &  then  python3 docs/demo/record.py
+    #  and render:      agg --font-size 14 /tmp/demo.cast docs/demo.gif)
     (2.0, "j"),                      # profiles: move to demo (only profile? default absent in demo home)
     (0.8, "\r"),                     # open profile -> bucket list
-    (1.6, "j"),                      # move cursor
-    (0.6, "j"),
-    (0.8, "\r"),                     # enter bucket (documents)
-    (1.8, "j"),                      # browse
-    (0.6, "\r"),                     # into reports/ .. depends on sort; dirs first
-    (1.6, "\x1b[D"),                 # back
-    (1.2, "p"),                      # preview panel on
-    (2.0, "p"),                      # preview off
+    (1.6, "j"),                      # backups -> documents
+    (0.8, "\r"),                     # enter bucket
+    (1.8, "j"),                      # cursor: reports/ -> notes.md
+    (1.0, "p"),                      # floating CONTENT preview of the file
+    (2.6, "j"), (0.5, "j"), (0.5, "j"),  # scroll the preview
+    (1.4, "\x1b"),                   # close preview
+    (0.8, "m"),                      # floating METADATA overlay
+    (2.8, "\x1b"),                   # close metadata
     (0.8, "l"),                      # dual-pane, local pane focused at cwd
     (1.6, "\r"),                     # enter project/ dir (dirs first)
     (1.2, " "),                      # select readme.md? (cursor on first entry)

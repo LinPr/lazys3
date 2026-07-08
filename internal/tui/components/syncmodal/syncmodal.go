@@ -66,12 +66,35 @@ func ParseFlags(s string) Flags {
 	return f
 }
 
+// FileProgress is a per-file snapshot of one sync plan entry, exposed to
+// the transfers overlay's detail view via PerFile. Transferred is
+// max-so-far and clamped to Size; Done flips on the file's completion
+// event (transferred >= total, which deletes report as (0,0)). Failed
+// marks files still without that event when the sync returned — the task
+// errored, or a cancel stopped it from ever running — so a finished
+// sync's cached snapshot has no forever-"running/queued" rows.
+type FileProgress struct {
+	Rel         string
+	Size        int64
+	Transferred int64
+	Done        bool
+	Failed      bool
+	Deleted     bool
+}
+
 // progressState is the shared struct the sync's worker goroutines write
 // (via record) and the poll loop reads (via snapshot). Sync's progress
 // callback fires repeatedly DURING each file transfer (throttled) plus a
 // final call with transferred==total, so a file counts as done exactly
 // once: on its first observation with total >= 0 and transferred >= total.
 // Deletes report (0,0) and therefore count immediately.
+//
+// Once SyncOptions.OnPlan delivers the plan (setPlan), the state also
+// tracks per-file byte progress and the whole-directory aggregate
+// (doneBytes/totalBytes over the non-delete entries), and mirrors that
+// aggregate into the transfer row's *transferpanel.Progress on every
+// record — so the row bar, the panel tick loop, and the 100%-on-done
+// rule all see directory-accurate bytes instead of the current file's.
 type progressState struct {
 	mu        sync.Mutex
 	doneFiles map[string]struct{}
@@ -79,10 +102,40 @@ type progressState struct {
 	curFile   string
 	curBytes  int64
 	curTotal  int64
+
+	plan       []FileProgress
+	planIdx    map[string]int
+	planSet    bool
+	totalBytes int64
+	doneBytes  int64
+	row        *transferpanel.Progress
 }
 
 func newProgressState() *progressState {
 	return &progressState{doneFiles: make(map[string]struct{})}
+}
+
+// setPlan installs the OnPlan result: per-file sizes in plan order, the
+// aggregate byte total (deletes excluded), and an initial 0/total report
+// on the row Progress so its bar turns determinate as soon as planning
+// finishes. Called once, before any transfer task runs.
+func (ps *progressState) setPlan(files []storage.PlannedTransfer) {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	ps.plan = make([]FileProgress, len(files))
+	ps.planIdx = make(map[string]int, len(files))
+	ps.totalBytes = 0
+	for i, f := range files {
+		ps.plan[i] = FileProgress{Rel: f.Rel, Size: f.Size, Deleted: f.Delete}
+		ps.planIdx[f.Rel] = i
+		if !f.Delete {
+			ps.totalBytes += f.Size
+		}
+	}
+	ps.planSet = true
+	if ps.row != nil {
+		ps.row.Report(ps.doneBytes, ps.totalBytes)
+	}
 }
 
 // record applies one progress callback observation. Callbacks run on
@@ -91,19 +144,71 @@ func (ps *progressState) record(file string, transferred, total int64) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 	ps.curFile, ps.curBytes, ps.curTotal = file, transferred, total
-	if total >= 0 && transferred >= total {
+	done := total >= 0 && transferred >= total
+	if done {
 		if _, ok := ps.doneFiles[file]; !ok {
 			ps.doneFiles[file] = struct{}{}
 			ps.filesDone++
 		}
 	}
+	if i, ok := ps.planIdx[file]; ok {
+		f := &ps.plan[i]
+		if done {
+			f.Done = true
+		}
+		if !f.Deleted {
+			// Max-so-far, clamped to the planned size (an upload may
+			// re-read its body once and reset the SDK's count); the
+			// completion event snaps the file to its full size so the
+			// aggregate converges to totalBytes even when the object
+			// changed between listing and transfer.
+			nt := transferred
+			if done || nt > f.Size {
+				nt = f.Size
+			}
+			if nt > f.Transferred {
+				ps.doneBytes += nt - f.Transferred
+				f.Transferred = nt
+			}
+		}
+	}
+	if ps.planSet && ps.row != nil {
+		ps.row.Report(ps.doneBytes, ps.totalBytes)
+	}
 }
 
-// snapshot returns the current counters for the poll loop.
+// snapshot returns the counters for the poll loop. Once the plan is
+// known, bytes/total are the DIRECTORY aggregate (deletes excluded);
+// before that they are the last raw callback pair (a plain per-file
+// observation), matching the pre-plan indeterminate row bar.
 func (ps *progressState) snapshot() (filesDone int, file string, bytes, total int64) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
+	if ps.planSet {
+		return ps.filesDone, ps.curFile, ps.doneBytes, ps.totalBytes
+	}
 	return ps.filesDone, ps.curFile, ps.curBytes, ps.curTotal
+}
+
+// aggregateBytes returns the whole-plan byte progress; ok is false until
+// the plan is known.
+func (ps *progressState) aggregateBytes() (done, total int64, ok bool) {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	return ps.doneBytes, ps.totalBytes, ps.planSet
+}
+
+// perFile returns a copy of the per-file plan snapshot; ok is false until
+// the plan is known.
+func (ps *progressState) perFile() ([]FileProgress, bool) {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	if !ps.planSet {
+		return nil, false
+	}
+	out := make([]FileProgress, len(ps.plan))
+	copy(out, ps.plan)
+	return out, true
 }
 
 // registry maps a transfer ID to its running sync's progress state so
@@ -121,10 +226,28 @@ func register(id string, ps *progressState) {
 	registry[id] = ps
 }
 
+// unregister removes the live entry and, when the sync got as far as a
+// plan, moves its final per-file snapshot into the completed-plan cache so
+// the transfers overlay's detail view keeps working after completion.
 func unregister(id string) {
 	regMu.Lock()
-	defer regMu.Unlock()
+	ps, ok := registry[id]
 	delete(registry, id)
+	regMu.Unlock()
+	if !ok {
+		return
+	}
+	if files, ok := ps.perFile(); ok {
+		// The sync has returned, so every file either produced its
+		// completion event (successful transfers always do, even when the
+		// object shrank below its planned size) or is terminally failed.
+		for i := range files {
+			if !files[i].Done {
+				files[i].Failed = true
+			}
+		}
+		cacheCompleted(id, files)
+	}
 }
 
 func lookup(id string) (*progressState, bool) {
@@ -132,6 +255,63 @@ func lookup(id string) (*progressState, bool) {
 	defer regMu.Unlock()
 	ps, ok := registry[id]
 	return ps, ok
+}
+
+// completedCap bounds the completed-plan cache: the transfer panel itself
+// keeps at most 100 history rows, but per-file plans can be large, so only
+// the most recent finished syncs stay inspectable in the detail view.
+const completedCap = 16
+
+var (
+	completedMu    sync.Mutex
+	completedPlans = make(map[string][]FileProgress)
+	completedOrder []string
+)
+
+// cacheCompleted stores a finished sync's final per-file snapshot, evicting
+// the oldest entry beyond completedCap.
+func cacheCompleted(id string, files []FileProgress) {
+	completedMu.Lock()
+	defer completedMu.Unlock()
+	if _, ok := completedPlans[id]; !ok {
+		completedOrder = append(completedOrder, id)
+	}
+	completedPlans[id] = files
+	for len(completedOrder) > completedCap {
+		oldest := completedOrder[0]
+		completedOrder = completedOrder[1:]
+		delete(completedPlans, oldest)
+	}
+}
+
+// PerFile returns the named sync's per-file plan snapshot: live from the
+// registry while the sync runs, from the completed-plan cache after it
+// finishes. ok is false when the sync never reached planning or its cache
+// entry was evicted.
+func PerFile(transferID string) ([]FileProgress, bool) {
+	if ps, ok := lookup(transferID); ok {
+		return ps.perFile()
+	}
+	completedMu.Lock()
+	defer completedMu.Unlock()
+	files, ok := completedPlans[transferID]
+	if !ok {
+		return nil, false
+	}
+	out := make([]FileProgress, len(files))
+	copy(out, files)
+	return out, true
+}
+
+// AggregateBytes returns the named RUNNING sync's whole-plan byte progress
+// (deletes excluded from the totals). ok is false before the plan is known
+// and after the sync unregisters.
+func AggregateBytes(transferID string) (doneBytes, totalBytes int64, ok bool) {
+	ps, found := lookup(transferID)
+	if !found {
+		return 0, 0, false
+	}
+	return ps.aggregateBytes()
 }
 
 // CmdDeps is the bundle of values the handler passes into NewCmd. It is
@@ -162,6 +342,12 @@ type CmdDeps struct {
 	// falls back to "sync <src> -> <dst>"; the dual-pane dir copies pass
 	// their "dir: ..." row label so the done message matches the panel.
 	Label string
+	// Progress, when non-nil, is the transfer row's shared byte counter.
+	// It receives the AGGREGATE directory progress (doneBytes/totalBytes
+	// over the whole plan, deletes excluded) on every callback once the
+	// plan is known, so the row bar and the panel's 100%-on-done rule are
+	// directory-accurate rather than tracking the current file.
+	Progress *transferpanel.Progress
 }
 
 // NewCmd returns a tea.Cmd that runs the sync and emits the transfer
@@ -175,6 +361,7 @@ func NewCmd(deps CmdDeps) tea.Cmd {
 	// Register the shared progress state synchronously so a poll firing
 	// before the sync goroutine starts still sees an active sync.
 	ps := newProgressState()
+	ps.row = deps.Progress
 	register(deps.TransferID, ps)
 	label := deps.Label
 	if label == "" {
@@ -234,6 +421,7 @@ func NewCmd(deps CmdDeps) tea.Cmd {
 			Exclude:     deps.Flags.Exclude,
 			Include:     deps.Flags.Include,
 			Concurrency: 4,
+			OnPlan:      ps.setPlan,
 		}
 
 		res, err := st.Sync(ctx, src, dst, opt, ps.record)

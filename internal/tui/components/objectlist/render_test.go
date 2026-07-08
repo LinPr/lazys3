@@ -244,6 +244,49 @@ func TestSelectedKeysDisplayOrderAndClear(t *testing.T) {
 	}
 }
 
+// TestSelectedRowMarkAndHighlight pins the multi-select visuals: a toggled
+// row renders "✔ " directly before the name and the whole row carries the
+// mark foreground (style.SelectedMarkFg, green), while untoggled rows get a
+// blank 2-cell marker and no mark color.
+func TestSelectedRowMarkAndHighlight(t *testing.T) {
+	m := NewModel()
+	m.SetSize(80, 20)
+	m.SetObjects(sampleObjects())
+	m.objectlist.Select(4) // zeta.txt
+	m.ToggleSelected()
+	m.objectlist.Select(0) // move the cursor off the marked row
+
+	d := newSelectDelegate(&m.selected)
+	items := m.objectlist.VisibleItems()
+	var marked, normal strings.Builder
+	d.Render(&marked, m.objectlist, 4, items[4])
+	d.Render(&normal, m.objectlist, 3, items[3])
+
+	if out := ansi.Strip(marked.String()); !strings.Contains(out, "✔ zeta.txt") {
+		t.Errorf("marked row should render '✔ ' before the name, got %q", out)
+	}
+	if out := ansi.Strip(normal.String()); !strings.Contains(out, "  mid.txt") || strings.Contains(out, "✔") {
+		t.Errorf("unmarked row should render a blank 2-cell marker, got %q", out)
+	}
+	// style.SelectedMarkFg (#04B575) as an SGR truecolor foreground.
+	const markSGR = "38;2;4;181;117"
+	if !strings.Contains(marked.String(), markSGR) {
+		t.Errorf("marked row should carry the mark foreground %s:\n%q", markSGR, marked.String())
+	}
+	if strings.Contains(normal.String(), markSGR) {
+		t.Errorf("unmarked row must not carry the mark foreground:\n%q", normal.String())
+	}
+
+	// The cursor row still composes with the mark: cursor styling (left
+	// border indicator) plus the ✔ marker.
+	m.objectlist.Select(4)
+	var cursorMarked strings.Builder
+	d.Render(&cursorMarked, m.objectlist, 4, items[4])
+	if out := ansi.Strip(cursorMarked.String()); !strings.Contains(out, "✔ zeta.txt") || !strings.Contains(out, "│") {
+		t.Errorf("cursor+marked row should keep both the ✔ and the cursor indicator, got %q", out)
+	}
+}
+
 func TestSelectionSurvivesFiltering(t *testing.T) {
 	m := NewModel()
 	m.SetSize(80, 20)

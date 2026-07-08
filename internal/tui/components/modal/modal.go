@@ -281,8 +281,8 @@ func (m Model) View() string {
 
 	header := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#e39f00ff")).
-		Background(lipgloss.Color("#444745ff")).
+		Foreground(lipgloss.Color("#e39f00")).
+		Background(lipgloss.Color("#444745")).
 		Padding(0, 1).
 		Render(m.title)
 

@@ -18,10 +18,13 @@ func NewCustomItemStyles(isDark bool) (s list.DefaultItemStyles) {
 	s.NormalDesc = s.NormalTitle.
 		Foreground(lightDark(lipgloss.Color("#A49FA5"), lipgloss.Color("#777777")))
 
+	// Cursor-row highlight. NOTE: lipgloss.Color only parses #RGB/#RRGGBB —
+	// the previous "#f3ec38ff" (8-digit hex) silently became NoColor, which
+	// is how the cursor row lost its highlight.
 	s.SelectedTitle = lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder(), false, false, false, true).
-		BorderForeground(lightDark(lipgloss.Color("#f3ec38ff"), lipgloss.Color("#f3ec38ff"))).
-		Foreground(lightDark(lipgloss.Color("#f3ec38ff"), lipgloss.Color("#f3ec38ff"))).
+		BorderForeground(style.CursorHighlightFg).
+		Foreground(style.CursorHighlightFg).
 		Padding(0, 0, 0, 1)
 
 	s.SelectedDesc = s.SelectedTitle.

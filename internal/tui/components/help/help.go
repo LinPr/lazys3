@@ -157,7 +157,7 @@ func DefaultBindings() []Group {
 				{Key: "q", Desc: "quit lazys3"},
 				{Key: "ctrl+c", Desc: "force quit"},
 				{Key: "?", Desc: "toggle this help overlay"},
-				{Key: "t", Desc: "toggle the live transfers overlay (newest first, scrollable)"},
+				{Key: "t", Desc: "toggle the live transfers overlay (newest first; enter: per-file sync detail, ←/→ scroll wide tables)"},
 				{Key: "x", Desc: "cancel the most recent running transfer (transfers overlay: the highlighted one)"},
 				{Key: "l", Desc: "toggle dual-pane layout (local ⇄ remote, needs ≥80 cols)"},
 				{Key: "tab", Desc: "switch focus between remote and local panes (dual-pane)"},
@@ -180,8 +180,7 @@ func DefaultBindings() []Group {
 				{Key: "s", Desc: "sync directory (local ⇄ s3, s3 ⇄ s3; dual-pane prefills both sides)"},
 				{Key: "y", Desc: "yank the highlighted bucket/object s3:// URI to the clipboard"},
 				{Key: "Y", Desc: "generate presigned share URL (object files only)"},
-				{Key: "v", Desc: "object versions (download / restore / delete a version)"},
-				{Key: "V", Desc: "toggle bucket versioning (Enabled ⇄ Suspended, bucket list)"},
+				{Key: "v", Desc: "object versions (object list) / toggle bucket versioning Enabled ⇄ Suspended (bucket list)"},
 				{Key: "g", Desc: "go to path: s3://bucket/prefix/ switches bucket, /path from the bucket root, rel/path from here"},
 			},
 		},
@@ -202,7 +201,7 @@ func DefaultBindings() []Group {
 		{
 			Name: "Selection & filter",
 			Bindings: []Binding{
-				{Key: "space", Desc: "toggle selection on the highlighted item"},
+				{Key: "space", Desc: "toggle selection on the highlighted item (✔ mark)"},
 				{Key: "a", Desc: "invert selection (select all ↔ none)"},
 				{Key: "/", Desc: "filter the focused list (enter applies, esc clears)"},
 				{Key: "o", Desc: "cycle sort field (name → size → time)"},
@@ -255,8 +254,8 @@ func (m Model) contentHeight() int {
 func (m Model) renderLines() []string {
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#e39f00ff")).
-		Background(lipgloss.Color("#444745ff")).
+		Foreground(lipgloss.Color("#e39f00")).
+		Background(lipgloss.Color("#444745")).
 		Padding(0, 1)
 	groupStyle := lipgloss.NewStyle().
 		Bold(true).

@@ -15,7 +15,7 @@ func TestLoadValid(t *testing.T) {
 theme:
   focused_border: "#ff0000"
   unfocused_border: "#333"
-  title_fg: "#aabbccdd"
+  title_fg: "#aabbcc"
   selected_fg: "#00ff00"
 
 ui:
@@ -37,7 +37,7 @@ local:
 	if cfg.Theme.UnfocusedBorder != "#333" {
 		t.Errorf("UnfocusedBorder = %q", cfg.Theme.UnfocusedBorder)
 	}
-	if cfg.Theme.TitleFg != "#aabbccdd" {
+	if cfg.Theme.TitleFg != "#aabbcc" {
 		t.Errorf("TitleFg = %q", cfg.Theme.TitleFg)
 	}
 	if cfg.Theme.SelectedFg != "#00ff00" {

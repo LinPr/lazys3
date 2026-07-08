@@ -40,14 +40,17 @@ func NewModel() Model {
 func NewModelWithFiles(files appcfg.AWSFiles) Model {
 	items := make([]list.Item, 0)
 	delegate := list.NewDefaultDelegate()
-	// Theme override for the highlighted row (style.Apply runs before the
-	// components are constructed). This delegate renders descriptions, so
-	// the desc line's left border must follow too or the two-line selection
-	// bar renders two different colors.
+	// Cursor-row highlight shared with the bucket picker; the theme's
+	// selected_fg override wins (style.Apply runs before the components are
+	// constructed). This delegate renders descriptions, so the desc line's
+	// left border must follow too or the two-line selection bar renders two
+	// different colors.
+	cursorFg := style.CursorHighlightFg
 	if c := style.SelectedItemFg; c != nil {
-		delegate.Styles.SelectedTitle = delegate.Styles.SelectedTitle.Foreground(c).BorderForeground(c)
-		delegate.Styles.SelectedDesc = delegate.Styles.SelectedDesc.BorderForeground(c)
+		cursorFg = c
 	}
+	delegate.Styles.SelectedTitle = delegate.Styles.SelectedTitle.Foreground(cursorFg).BorderForeground(cursorFg)
+	delegate.Styles.SelectedDesc = delegate.Styles.SelectedDesc.BorderForeground(cursorFg)
 	profileList := list.New(items, delegate, 0, 0)
 	profileList.Styles.Title = style.ListTitleStyle(true)
 	profileList.Filter = filter.Substring

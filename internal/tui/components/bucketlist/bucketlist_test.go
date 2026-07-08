@@ -1,6 +1,35 @@
 package bucketlist
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+// TestCursorRowHighlighted pins the cursor-row highlight: the highlighted
+// bucket carries the picker highlight foreground (style.CursorHighlightFg,
+// #f3ec38 → SGR 38;2;243;236;56) plus the left-border indicator, and other
+// rows do not. Regression: the color was authored as 8-digit hex
+// ("#f3ec38ff"), which lipgloss.Color rejects — the row silently rendered
+// with no highlight at all.
+func TestCursorRowHighlighted(t *testing.T) {
+	const cursorSGR = "38;2;243;236;56"
+	m := NewModel()
+	m.SetSize(60, 20)
+	m.SetBuckets([]Bucket{NewBucket("alpha"), NewBucket("beta")})
+	for _, line := range strings.Split(m.View(), "\n") {
+		if strings.Contains(line, "alpha") {
+			if !strings.Contains(line, cursorSGR) {
+				t.Errorf("cursor row should carry the highlight fg %s:\n%q", cursorSGR, line)
+			}
+			if !strings.Contains(line, "│") {
+				t.Errorf("cursor row should carry the left-border indicator:\n%q", line)
+			}
+		}
+		if strings.Contains(line, "beta") && strings.Contains(line, cursorSGR) {
+			t.Errorf("non-cursor row must not carry the highlight fg:\n%q", line)
+		}
+	}
+}
 
 // TestSetBucketsPreservesAppliedFilterAndSelection pins the round-3F
 // data-safety regression at the component level: replacing the items while

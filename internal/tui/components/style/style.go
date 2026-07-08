@@ -10,7 +10,7 @@ var (
 	// list-navigation keys; UnfocusedBorderColor marks the other pane in
 	// dual-pane mode. Single-pane lists stay focused, keeping the
 	// original border color.
-	FocusedBorderColor   = lipgloss.Color("#20e71cff")
+	FocusedBorderColor   = lipgloss.Color("#20e71c")
 	UnfocusedBorderColor = lipgloss.Color("#555555")
 
 	AppStyle = lipgloss.NewStyle()
@@ -24,9 +24,9 @@ var (
 		// Padding(1, 2).
 		// Margin(1, 2).
 		// Width(30).
-		// Background(lipgloss.Color("#000000ff")).
+		// Background(lipgloss.Color("#000000")).
 		Border(lipgloss.NormalBorder()).
-		BorderForeground(lipgloss.Color("#20e71cff"))
+		BorderForeground(lipgloss.Color("#20e71c"))
 
 		// Margin(1, 2)
 
@@ -34,17 +34,17 @@ var (
 		// Padding(1, 2).
 		// Margin(1, 2).
 		// Width(30).
-		// Background(lipgloss.Color("#000000ff")).
+		// Background(lipgloss.Color("#000000")).
 		Border(lipgloss.NormalBorder()).
-		BorderForeground(lipgloss.Color("#20e71cff"))
+		BorderForeground(lipgloss.Color("#20e71c"))
 
 	ObjectListStyle = lipgloss.NewStyle().
 		// Padding(1, 2).
 		// Margin(1, 2).
 		// Width(30).
-		// Background(lipgloss.Color("#000000ff")).
+		// Background(lipgloss.Color("#000000")).
 		Border(lipgloss.NormalBorder()).
-		BorderForeground(lipgloss.Color("#20e71cff"))
+		BorderForeground(lipgloss.Color("#20e71c"))
 
 	LocalListStyle = lipgloss.NewStyle().
 			Border(lipgloss.NormalBorder()).
@@ -59,8 +59,8 @@ var (
 		// Padding(1, 2)
 
 	TitleStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#e39f00ff")).
-			Background(lipgloss.Color("#444745ff")).
+			Foreground(lipgloss.Color("#e39f00")).
+			Background(lipgloss.Color("#444745")).
 			Padding(0, 1)
 
 	// listTitleUnfocusedFg dims the unfocused pane's title text in
@@ -69,6 +69,17 @@ var (
 
 	StatusMessageStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#04B575"))
+
+	// SelectedMarkFg colors rows toggled for multi-select in the object
+	// and local lists (the ✔ mark and the row text). Green to match the
+	// mark on dark terminals; the theme's selected_fg override
+	// (SelectedItemFg) wins when set.
+	SelectedMarkFg = lipgloss.Color("#04B575")
+
+	// CursorHighlightFg is the cursor-row foreground (and its left-border
+	// indicator) shared by the bucket and profile pickers. The theme's
+	// selected_fg override (SelectedItemFg) wins when set.
+	CursorHighlightFg = lipgloss.Color("#f3ec38")
 
 	// StatusErrorStyle renders the status bar's error chip.
 	StatusErrorStyle = lipgloss.NewStyle().

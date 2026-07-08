@@ -80,6 +80,36 @@ func TestProgressTrackerFinishReportsTotal(t *testing.T) {
 	}
 }
 
+// TestFinishCompleteSnapsTotal pins the sync completion contract: the
+// terminal report always satisfies transferred >= total, snapping total
+// down when the object shrank below its planned size (or was never
+// known) and leaving it untouched otherwise.
+func TestFinishCompleteSnapsTotal(t *testing.T) {
+	tr, got := collectTracker(1000, time.Hour)
+	tr.add(400) // object shrank: only 400 of the planned 1000 exist
+	tr.finishComplete()
+	if last := (*got)[len(*got)-1]; last != (record{400, 400}) {
+		t.Errorf("shrunk final callback = %+v, want {400 400}", last)
+	}
+
+	tr, got = collectTracker(1000, time.Hour)
+	tr.add(1000)
+	tr.finishComplete()
+	if last := (*got)[len(*got)-1]; last != (record{1000, 1000}) {
+		t.Errorf("full-size final callback = %+v, want {1000 1000}", last)
+	}
+
+	tr, got = collectTracker(-1, time.Hour)
+	tr.add(7)
+	tr.finishComplete()
+	if last := (*got)[len(*got)-1]; last != (record{7, 7}) {
+		t.Errorf("unknown-total final callback = %+v, want {7 7}", last)
+	}
+
+	var nilTr *progressTracker
+	nilTr.finishComplete() // must be a no-op
+}
+
 func TestProgressReaderCounts(t *testing.T) {
 	tr, got := collectTracker(11, 0)
 	r := &progressReader{r: strings.NewReader("hello world"), t: tr}

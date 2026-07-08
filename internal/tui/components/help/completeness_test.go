@@ -39,7 +39,6 @@ var claimedKeys = []struct {
 	{key: "y"},
 	{key: "Y"},
 	{key: "v"},
-	{key: "V"},
 	// Search & sort
 	{key: "/"},
 	{key: "o"},

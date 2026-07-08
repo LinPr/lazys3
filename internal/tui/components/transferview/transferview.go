@@ -14,16 +14,26 @@
 //
 // Terminal rows render their FINAL state, never a frozen tick value: a done
 // transfer with a known total shows a full bar + 100%; done with an unknown
-// total shows just the done marker (no bouncing bar); failed shows the
-// error snippet; canceled its marker. Status glyphs fall back to ASCII
+// total shows just the done word (no bouncing bar); failed shows the
+// error snippet; canceled its word. Status glyphs fall back to ASCII
 // ("ok"/"x"/"-") when nerd_font is off, matching the status bar tallies.
 //
-// Rows are a fixed-column table under a dim header, columns in this order:
-// [marker+status glyph (4)] [op (10)] [progress bar+percent or status word
-// (17)] [file label (flex, ansi-truncated with …)] [note/error (24)] — the
-// fixed columns come BEFORE the variable-width label so alignment survives
-// long keys, and the note column is dropped when the terminal is too narrow
-// to leave the label its minimum width.
+// Rows are a table under a dim header, columns in this order:
+// [cursor marker (2, fixed)] [op] [file] [progress] [status glyph] [note].
+// Column widths are DYNAMIC: each is max(header, longest cell among the
+// VISIBLE rows), clamped to a per-column cap (op 12, file 60, note 40;
+// progress is fixed bar+percent), recomputed every render. When the
+// assembled row overflows the terminal, ←/→ shift a horizontal offset over
+// the columns (the marker stays put); the slicing is ANSI-safe and pads a
+// split CJK rune with a space (the PlaceOverlay trick) so columns never
+// drift.
+//
+// Pressing enter on a sync row opens a per-file detail mode inside the
+// overlay (esc/enter returns): one row per planned file with its own
+// status glyph, relative path, live bar+percent and size, backed by
+// syncmodal.PerFile — live from the poll registry while the sync runs, and
+// from syncmodal's completed-plan cache (small, capped) after the row goes
+// terminal, so the detail stays inspectable for recent finished syncs.
 package transferview
 
 import (
@@ -36,16 +46,30 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/LinPr/lazys3/internal/tui/components/style"
+	"github.com/LinPr/lazys3/internal/tui/components/syncmodal"
 	"github.com/LinPr/lazys3/internal/tui/components/transferpanel"
 )
 
-// Model is the transfers overlay state (visibility, cursor, scroll window).
+// perFileFn is the detail view's data source; a package variable so tests
+// can stub the per-file snapshots without running a real sync.
+var perFileFn = syncmodal.PerFile
+
+// Model is the transfers overlay state (visibility, cursor, scroll window,
+// horizontal offset, and the per-file detail mode).
 type Model struct {
 	visible bool
 	cursor  int
 	offset  int
+	hoffset int
 	width   int
 	height  int
+
+	// detailID, when non-empty, switches the overlay into the per-file
+	// detail mode for that sync transfer.
+	detailID     string
+	detailLabel  string
+	detailCursor int
+	detailOffset int
 }
 
 // NewModel returns a hidden transfers overlay.
@@ -60,6 +84,8 @@ func (m *Model) Show() {
 	m.visible = true
 	m.cursor = 0
 	m.offset = 0
+	m.hoffset = 0
+	m.CloseDetail()
 }
 
 func (m *Model) Hide() { m.visible = false }
@@ -85,47 +111,155 @@ func (m *Model) SetSize(w, h int) {
 // snapshot); the TUI maps it to a transfer ID for the 'x' cancel.
 func (m Model) Cursor() int { return m.cursor }
 
-// HandleKey moves the cursor (j/k, arrows, pgup/pgdown, g/G) over total
-// rows. Unrecognised keys are swallowed by design — the TUI forwards
-// nothing else while the overlay is visible.
-func (m *Model) HandleKey(key string, total int) {
-	page := m.pageSize()
-	switch key {
-	case "j", "down":
-		m.cursor++
-	case "k", "up":
-		m.cursor--
-	case "pgdown":
-		m.cursor += page
-	case "pgup":
-		m.cursor -= page
-	case "g", "home":
-		m.cursor = 0
-	case "G", "end":
-		m.cursor = total - 1
-	}
-	m.clamp(total)
+// InDetail reports whether the per-file detail mode is active; the TUI
+// routes esc to CloseDetail (instead of Hide) and disables 'x' while it is.
+func (m Model) InDetail() bool { return m.detailID != "" }
+
+// CloseDetail returns from the detail mode to the transfer list.
+func (m *Model) CloseDetail() {
+	m.detailID = ""
+	m.detailLabel = ""
+	m.detailCursor = 0
+	m.detailOffset = 0
 }
 
-// clamp keeps the cursor inside the listing and the scroll window around
-// the cursor.
-func (m *Model) clamp(total int) {
-	if m.cursor >= total {
-		m.cursor = total - 1
+// HandleEnter toggles the per-file detail mode: on a sync row it opens the
+// detail listing, inside the detail it returns to the list, and on any
+// other row it is a no-op.
+func (m *Model) HandleEnter(rows []transferpanel.Transfer) {
+	if m.InDetail() {
+		m.CloseDetail()
+		return
 	}
-	if m.cursor < 0 {
-		m.cursor = 0
+	c := m.cursor
+	if c >= len(rows) {
+		c = len(rows) - 1
 	}
+	if c < 0 || rows[c].Op != transferpanel.OpSync {
+		return
+	}
+	m.detailID = rows[c].ID
+	m.detailLabel = rows[c].Label
+	m.detailCursor = 0
+	m.detailOffset = 0
+}
+
+// hStep is how many cells one ←/→ press shifts the horizontal offset.
+const hStep = 8
+
+// HandleKey moves the cursor (j/k, arrows, pgup/pgdown, g/G) over the rows
+// and shifts the horizontal offset (←/→) when the table overflows. In the
+// detail mode the same vertical keys move over the per-file listing
+// (horizontal scroll is list-mode only — the detail truncates instead).
+// Unrecognised keys are swallowed by design — the TUI forwards nothing
+// else while the overlay is visible.
+func (m *Model) HandleKey(key string, rows []transferpanel.Transfer) {
+	if m.InDetail() {
+		files, _ := perFileFn(m.detailID)
+		m.detailCursor, m.detailOffset = moveCursor(
+			key, m.detailCursor, m.detailOffset, len(files), m.pageSize())
+		return
+	}
+	switch key {
+	case "left":
+		m.hoffset -= hStep
+	case "right":
+		m.hoffset += hStep
+	default:
+		m.cursor, m.offset = moveCursor(key, m.cursor, m.offset, len(rows), m.pageSize())
+	}
+	m.clampH(rows)
+}
+
+// moveCursor applies one navigation key to a cursor/offset pair over total
+// rows and a page-sized window, returning the clamped pair.
+func moveCursor(key string, cursor, offset, total, page int) (int, int) {
+	switch key {
+	case "j", "down":
+		cursor++
+	case "k", "up":
+		cursor--
+	case "pgdown":
+		cursor += page
+	case "pgup":
+		cursor -= page
+	case "g", "home":
+		cursor = 0
+	case "G", "end":
+		cursor = total - 1
+	}
+	if cursor >= total {
+		cursor = total - 1
+	}
+	if cursor < 0 {
+		cursor = 0
+	}
+	if cursor < offset {
+		offset = cursor
+	}
+	if cursor >= offset+page {
+		offset = cursor - page + 1
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	return cursor, offset
+}
+
+// clampH clamps the horizontal offset to the current visible page's
+// content overflow (0 when everything fits). View re-clamps display-side
+// too, because the row set can change between keys.
+func (m *Model) clampH(rows []transferpanel.Transfer) {
+	w := computeWidths(m.visibleWindow(rows))
+	m.hoffset = clampHOffset(m.hoffset, w.content(), m.viewportW())
+}
+
+func clampHOffset(off, content, viewport int) int {
+	maxOff := content - viewport
+	if maxOff < 0 {
+		maxOff = 0
+	}
+	if off > maxOff {
+		off = maxOff
+	}
+	if off < 0 {
+		off = 0
+	}
+	return off
+}
+
+// visibleWindow returns the page of rows the overlay currently shows,
+// mirroring View's display clamping.
+func (m Model) visibleWindow(rows []transferpanel.Transfer) []transferpanel.Transfer {
 	page := m.pageSize()
-	if m.cursor < m.offset {
-		m.offset = m.cursor
+	_, offset := clampView(m.cursor, m.offset, len(rows), page)
+	end := offset + page
+	if end > len(rows) {
+		end = len(rows)
 	}
-	if m.cursor >= m.offset+page {
-		m.offset = m.cursor - page + 1
+	return rows[offset:end]
+}
+
+// clampView is the display-side cursor/offset clamp: the row count can
+// change between HandleKey calls (new transfers, pruning), so View clamps
+// again without mutating the model.
+func clampView(cursor, offset, total, page int) (int, int) {
+	if cursor >= total {
+		cursor = total - 1
 	}
-	if m.offset < 0 {
-		m.offset = 0
+	if cursor < 0 {
+		cursor = 0
 	}
+	if offset > cursor {
+		offset = cursor
+	}
+	if max := total - page; offset > max {
+		offset = max
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	return cursor, offset
 }
 
 var boxStyle = lipgloss.NewStyle().
@@ -150,6 +284,10 @@ func (m Model) innerWidth() int {
 	}
 	return inner
 }
+
+// viewportW is the horizontally scrollable budget: the inner width minus
+// the fixed cursor-marker column.
+func (m Model) viewportW() int { return m.innerWidth() - markerW }
 
 // statusGlyph maps a status to its marker; ASCII fallbacks when nerd_font
 // is off (matching the status bar's ">"/"ok"/"x" tallies).
@@ -187,39 +325,59 @@ func statusGlyph(s transferpanel.Status) string {
 // barWidth is the progress bar cell budget.
 const barWidth = 10
 
-// Table column budgets. progW fits the widest progress cell
-// ("[██████████] 100%"): brackets + bar + space + 4-cell percent.
+// Table layout: the cursor-marker column is fixed (never scrolled); the
+// dynamic columns are joined by colGap spaces and clamped to per-column
+// caps. progW fits the widest progress cell ("[██████████] 100%"):
+// brackets + bar + space + 4-cell percent.
 const (
-	markerW = 4 // "▸ " + 2-cell status glyph
-	opW     = 10
-	progW   = barWidth + 7
-	noteW   = 24
+	markerW = 2 // "▸ "
 	colGap  = 2
-	// minLabelW is the least readable file column; when the note column
-	// would squeeze the label below it, the note is dropped instead.
-	minLabelW = 8
+	progW   = barWidth + 7
+	opCap   = 12
+	fileCap = 60
+	noteCap = 40
 )
 
-// columnWidths splits the inner width into the flex label column and the
-// note column (0 = dropped at narrow widths).
-func columnWidths(inner int) (labelW, noteWidth int) {
-	fixed := markerW + colGap + opW + colGap + progW + colGap
-	labelW = inner - fixed - colGap - noteW
-	if labelW >= minLabelW {
-		return labelW, noteW
+// colWidths carries one render's dynamic column widths.
+type colWidths struct {
+	op, file, prog, status, note int
+}
+
+// content is the assembled row width (marker excluded): the five columns
+// plus the four gaps between them.
+func (w colWidths) content() int {
+	return w.op + w.file + w.prog + w.status + w.note + 4*colGap
+}
+
+// computeWidths sizes each column to max(header, longest visible cell),
+// clamped to its cap. Recomputed per render, over the VISIBLE rows only,
+// so the table is as narrow as its current page allows.
+func computeWidths(rows []transferpanel.Transfer) colWidths {
+	w := colWidths{
+		op:     ansi.StringWidth("op"),
+		file:   ansi.StringWidth("file"),
+		prog:   progW,
+		status: ansi.StringWidth("st"),
+		note:   ansi.StringWidth("note"),
 	}
-	labelW = inner - fixed
-	if labelW < minLabelW {
-		labelW = minLabelW
+	for _, t := range rows {
+		w.op = max(w.op, ansi.StringWidth(string(t.Op)))
+		w.file = max(w.file, ansi.StringWidth(t.Label))
+		w.status = max(w.status, ansi.StringWidth(statusGlyph(t.Status)))
+		w.note = max(w.note, ansi.StringWidth(noteCell(t)))
 	}
-	return labelW, 0
+	w.op = min(w.op, opCap)
+	w.file = min(w.file, fileCap)
+	w.note = min(w.note, noteCap)
+	return w
 }
 
 // animFrame derives the indeterminate bar's bounce position from wall-clock
-// time. The panel's tick frame only advances for Progress-carrying
-// transfers, so a sync (which reports via SyncPollMsg, no Progress counter)
-// would freeze a frame-driven bar; time keeps it moving on every 200ms
-// repaint regardless of what armed the repaint.
+// time rather than the panel's tick frame: repaints can be armed by
+// SyncPollMsg independently of the panel tick, and a sync row's bar stays
+// indeterminate until OnPlan delivers the totals, so it must bounce even
+// before its shared Progress counter reports anything; time keeps it moving
+// on every 200ms repaint regardless of what armed the repaint.
 func animFrame() int {
 	return int(time.Now().UnixMilli() / 200)
 }
@@ -288,6 +446,18 @@ func progressCell(t transferpanel.Transfer, frame int) string {
 	}
 }
 
+// noteCell merges the row note with, on failed rows, the error snippet.
+func noteCell(t transferpanel.Transfer) string {
+	note := t.Note
+	if t.Status == transferpanel.StatusFailed && t.Err != nil {
+		if note != "" {
+			note += " · "
+		}
+		note += t.Err.Error()
+	}
+	return note
+}
+
 // pad pads or truncates s to exactly w display cells. A truncation that
 // lands on a double-width rune yields w-1 cells, so the result is
 // re-padded to keep the following columns aligned.
@@ -301,105 +471,110 @@ func pad(s string, w int) string {
 	return s
 }
 
-// renderRow renders one transfer as an aligned table row:
+// hslice returns the wide-rune-safe [off, off+w) cell window of line: a
+// CJK rune straddling the left cut is dropped and padded with a space (the
+// PlaceOverlay splice trick), so every row keeps its columns aligned no
+// matter where the offset lands.
+func hslice(line string, off, w int) string {
+	if w <= 0 {
+		return ""
+	}
+	if off <= 0 {
+		return ansi.Truncate(line, w, "")
+	}
+	lw := ansi.StringWidth(line)
+	if off >= lw {
+		return ""
+	}
+	s := ansi.TruncateLeft(line, off, "")
+	if ansi.StringWidth(s) > lw-off {
+		// TruncateLeft keeps a wide rune straddling the cut whole (one
+		// cell too wide); drop it and pad with a space instead.
+		s = " " + ansi.TruncateLeft(line, off+1, "")
+	}
+	return ansi.Truncate(s, w, "")
+}
+
+// gap is the inter-column spacer.
+var gap = strings.Repeat(" ", colGap)
+
+// renderRow renders one transfer's dynamic columns (marker excluded):
 //
-//	▸ ✓   download    [██████████] 100%  s3://b/key -> ./key   note
-func renderRow(t transferpanel.Transfer, selected bool, frame, inner int) string {
-	marker := "  "
-	if selected {
-		marker = "▸ "
-	}
-	labelW, noteWidth := columnWidths(inner)
-	cells := []string{
-		marker + pad(statusGlyph(t.Status), markerW-2),
-		pad(string(t.Op), opW),
-		pad(progressCell(t, frame), progW),
-		pad(t.Label, labelW),
-	}
-	if noteWidth > 0 {
-		// The note column carries the row note and, on failed rows, the
-		// error snippet.
-		note := t.Note
-		if t.Status == transferpanel.StatusFailed && t.Err != nil {
-			if note != "" {
-				note += " · "
-			}
-			note += t.Err.Error()
-		}
-		cells = append(cells, pad(note, noteWidth))
-	}
-	row := strings.Join(cells, strings.Repeat(" ", colGap))
-	return ansi.Truncate(row, inner, "")
+//	download  s3://b/key -> ./key  [██████████] 100%  ✓  note
+func renderRow(t transferpanel.Transfer, frame int, w colWidths) string {
+	return strings.Join([]string{
+		pad(string(t.Op), w.op),
+		pad(t.Label, w.file),
+		pad(progressCell(t, frame), w.prog),
+		pad(statusGlyph(t.Status), w.status),
+		pad(noteCell(t), w.note),
+	}, gap)
 }
 
 // headerRow renders the dim column header the rows align under.
-func headerRow(inner int) string {
-	labelW, noteWidth := columnWidths(inner)
-	cells := []string{
-		pad("", markerW),
-		pad("op", opW),
-		pad("progress", progW),
-		pad("file", labelW),
-	}
-	if noteWidth > 0 {
-		cells = append(cells, pad("note", noteWidth))
-	}
-	return ansi.Truncate(strings.Join(cells, strings.Repeat(" ", colGap)), inner, "")
+func headerRow(w colWidths) string {
+	return strings.Join([]string{
+		pad("op", w.op),
+		pad("file", w.file),
+		pad("progress", w.prog),
+		pad("st", w.status),
+		pad("note", w.note),
+	}, gap)
 }
+
+var (
+	titleStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#e39f00")).
+			Background(lipgloss.Color("#444745")).
+			Padding(0, 1)
+	dimStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#aaaaaa"))
+)
 
 // View renders the overlay from the live rows snapshot (newest first): a
 // full-canvas bordered box with a title, the visible page of rows, and a
-// footer with the key legend. The scroll window is re-clamped here because
-// the row count can change between HandleKey calls (new transfers,
-// pruning). Indeterminate bars are positioned by animFrame (wall-clock).
+// footer with the key legend. The scroll window and horizontal offset are
+// re-clamped here because the row count (and the dynamic column widths)
+// can change between HandleKey calls. Indeterminate bars are positioned by
+// animFrame (wall-clock). In detail mode the box body is the per-file
+// listing instead.
 func (m Model) View(rows []transferpanel.Transfer) string {
 	if !m.visible {
 		return ""
 	}
+	if m.InDetail() {
+		return m.renderBox(m.detailLines())
+	}
 	frame := animFrame()
-
-	titleStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("#e39f00ff")).
-		Background(lipgloss.Color("#444745ff")).
-		Padding(0, 1)
-	dimStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#aaaaaa"))
 
 	inner := m.innerWidth()
 	page := m.pageSize()
+	cursor, offset := clampView(m.cursor, m.offset, len(rows), page)
 
-	cursor, offset := m.cursor, m.offset
-	if cursor >= len(rows) {
-		cursor = len(rows) - 1
+	end := offset + page
+	if end > len(rows) {
+		end = len(rows)
 	}
-	if cursor < 0 {
-		cursor = 0
-	}
-	if offset > cursor {
-		offset = cursor
-	}
-	if max := len(rows) - page; offset > max {
-		offset = max
-	}
-	if offset < 0 {
-		offset = 0
-	}
+	visible := rows[offset:end]
+	w := computeWidths(visible)
+	viewW := m.viewportW()
+	hoff := clampHOffset(m.hoffset, w.content(), viewW)
 
 	lines := []string{
 		titleStyle.Render("lazys3 — transfers (live, newest first)"),
-		dimStyle.Render(headerRow(inner)),
+		dimStyle.Render(strings.Repeat(" ", markerW) + hslice(headerRow(w), hoff, viewW)),
 	}
 
 	if len(rows) == 0 {
 		lines = append(lines, dimStyle.Render("no transfers this session — d/u/c/s start one"))
 	} else {
-		end := offset + page
-		if end > len(rows) {
-			end = len(rows)
-		}
-		for i, r := range rows[offset:end] {
-			lines = append(lines, renderRow(r, offset+i == cursor, frame, inner))
+		for i, r := range visible {
+			marker := strings.Repeat(" ", markerW)
+			if offset+i == cursor {
+				marker = "▸ "
+			}
+			lines = append(lines, marker+hslice(renderRow(r, frame, w), hoff, viewW))
 		}
 	}
 
@@ -407,12 +582,155 @@ func (m Model) View(rows []transferpanel.Transfer) string {
 	if len(rows) > page {
 		footer = fmt.Sprintf("%d-%d of %d", offset+1, min(offset+page, len(rows)), len(rows))
 	}
-	footer += " · j/k pgup/pgdn g/G scroll · x cancel highlighted · t/esc close"
+	// The ←/→ hint (with the current offset over the hidden cells) comes
+	// right after the count so a narrow terminal — exactly when the table
+	// overflows — never truncates it away with the long key legend.
+	if w.content() > viewW {
+		footer += fmt.Sprintf(" · ←/→ scroll %d/%d", hoff, w.content()-viewW)
+	}
+	footer += " · j/k pgup/pgdn g/G scroll · enter sync detail · x cancel highlighted · t/esc close"
 	lines = append(lines, dimStyle.Render(ansi.Truncate(footer, inner, "…")))
+	return m.renderBox(lines)
+}
 
+// renderBox wraps the assembled lines in the overlay's full-canvas box.
+func (m Model) renderBox(lines []string) string {
 	box := boxStyle.Width(m.width)
 	if m.height > 0 {
 		box = box.Height(m.height)
 	}
 	return box.Render(strings.Join(lines, "\n"))
+}
+
+// Detail-mode layout: [marker][status glyph][rel path][bar+percent][size],
+// the path column dynamic like the list's file column.
+const detailFileCap = 60
+
+// fileGlyph maps a planned file's state onto the row status glyphs:
+// done ✓, failed ✗, started ▸, still queued ….
+func fileGlyph(f syncmodal.FileProgress) string {
+	switch {
+	case f.Done:
+		return statusGlyph(transferpanel.StatusDone)
+	case f.Failed:
+		return statusGlyph(transferpanel.StatusFailed)
+	case f.Transferred > 0:
+		return statusGlyph(transferpanel.StatusRunning)
+	default:
+		return statusGlyph(transferpanel.StatusQueued)
+	}
+}
+
+// fileProgressCell renders a planned file's progress column: deletes get a
+// word (no bytes move), failed and zero-byte files their terminal word,
+// everything else a live bar+percent against the planned size.
+func fileProgressCell(f syncmodal.FileProgress) string {
+	switch {
+	case f.Deleted:
+		if f.Done {
+			return "deleted"
+		}
+		if f.Failed {
+			return "failed"
+		}
+		return "delete"
+	case f.Failed:
+		return "failed"
+	case f.Done:
+		if f.Size > 0 {
+			return fmt.Sprintf("[%s] 100%%", strings.Repeat("█", barWidth))
+		}
+		return "done"
+	case f.Size > 0:
+		return fmt.Sprintf("[%s] %s", bar(f.Transferred, f.Size, 0), percent(f.Transferred, f.Size))
+	default:
+		return "queued"
+	}
+}
+
+// humanBytes renders n in binary units ("1.5 KiB").
+func humanBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for m := n / unit; m >= unit; m /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
+}
+
+// detailLines renders the per-file detail body: title, header, the visible
+// page of planned files (live from syncmodal while the sync runs, from the
+// completed-plan cache afterwards) and a footer. The listing repaints on
+// the same tick/poll cadence as the list view.
+func (m Model) detailLines() []string {
+	title := m.detailLabel
+	if !strings.HasPrefix(title, "dir:") {
+		title = "dir: " + title
+	}
+	inner := m.innerWidth()
+	lines := []string{titleStyle.Render(ansi.Truncate(title, inner-2, "…"))}
+
+	files, ok := perFileFn(m.detailID)
+	if !ok {
+		lines = append(lines,
+			dimStyle.Render("no per-file plan recorded for this sync"),
+			dimStyle.Render("esc/enter back · t close"))
+		return lines
+	}
+
+	page := m.pageSize()
+	cursor, offset := clampView(m.detailCursor, m.detailOffset, len(files), page)
+	end := offset + page
+	if end > len(files) {
+		end = len(files)
+	}
+	visible := files[offset:end]
+
+	stW, fileW, sizeW := ansi.StringWidth("st"), ansi.StringWidth("file"), ansi.StringWidth("size")
+	doneCount := 0
+	for _, f := range files {
+		if f.Done {
+			doneCount++
+		}
+	}
+	for _, f := range visible {
+		stW = max(stW, ansi.StringWidth(fileGlyph(f)))
+		fileW = max(fileW, ansi.StringWidth(f.Rel))
+		sizeW = max(sizeW, ansi.StringWidth(humanBytes(f.Size)))
+	}
+	fileW = min(fileW, detailFileCap)
+
+	header := strings.Join([]string{
+		pad("st", stW), pad("file", fileW), pad("progress", progW), pad("size", sizeW),
+	}, gap)
+	lines = append(lines, dimStyle.Render(strings.Repeat(" ", markerW)+ansi.Truncate(header, inner-markerW, "")))
+
+	if len(files) == 0 {
+		lines = append(lines, dimStyle.Render("nothing to transfer — everything already in sync"))
+	}
+	for i, f := range visible {
+		marker := strings.Repeat(" ", markerW)
+		if offset+i == cursor {
+			marker = "▸ "
+		}
+		row := strings.Join([]string{
+			pad(fileGlyph(f), stW),
+			pad(f.Rel, fileW),
+			pad(fileProgressCell(f), progW),
+			pad(humanBytes(f.Size), sizeW),
+		}, gap)
+		lines = append(lines, marker+ansi.Truncate(row, inner-markerW, ""))
+	}
+
+	footer := fmt.Sprintf("%d file(s) · %d done", len(files), doneCount)
+	if len(files) > page {
+		footer = fmt.Sprintf("%d-%d of %d · %d done", offset+1, end, len(files), doneCount)
+	}
+	footer += " · j/k scroll · esc/enter back · t close"
+	lines = append(lines, dimStyle.Render(ansi.Truncate(footer, inner, "…")))
+	return lines
 }

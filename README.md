@@ -34,8 +34,8 @@ A terminal UI for browsing and operating S3-compatible object storage (AWS S3, A
 **Versioning & sharing**
 
 - Presigned share URLs (`Y`) with configurable expiry (1s..168h, default 1h), copied straight to the clipboard
-- Object versions (`v`): download, restore, or delete a specific version
-- Toggle bucket versioning (`V`): Enabled ⇄ Suspended
+- Object versions (`v` in the object list): download, restore, or delete a specific version
+- Toggle bucket versioning (`v` in the bucket list): Enabled ⇄ Suspended
 - Yank (`y`): the `s3://` URI of a bucket/object, or the absolute path of a local entry
 
 **UX**
@@ -56,7 +56,7 @@ Press `?` inside lazys3 to see this list as a scrollable overlay.
 | `q` | quit lazys3 |
 | `ctrl+c` | force quit |
 | `?` | toggle the help overlay |
-| `t` | toggle the live transfers overlay (newest first, scrollable) |
+| `t` | toggle the live transfers overlay (newest first; `enter`: per-file sync detail, `←`/`→` scroll wide tables) |
 | `x` | cancel the most recent running transfer (transfers overlay: the highlighted one) |
 | `l` | toggle dual-pane layout (local ⇄ remote, needs ≥80 cols) |
 | `tab` | switch focus between remote and local panes (dual-pane) |
@@ -79,8 +79,7 @@ Press `?` inside lazys3 to see this list as a scrollable overlay.
 | `s` | sync directory (local ⇄ s3, s3 ⇄ s3; dual-pane prefills both sides) |
 | `y` | yank the highlighted bucket/object `s3://` URI to the clipboard |
 | `Y` | generate presigned share URL (object files only) |
-| `v` | object versions (download / restore / delete a version) |
-| `V` | toggle bucket versioning (Enabled ⇄ Suspended, bucket list) |
+| `v` | object versions (object list) / toggle bucket versioning Enabled ⇄ Suspended (bucket list) |
 | `g` | go to path: `s3://bucket/prefix/` switches bucket, `/path` from the bucket root, `rel/path` from here |
 
 ### Local pane
@@ -101,7 +100,7 @@ Press `?` inside lazys3 to see this list as a scrollable overlay.
 
 | Key | Action |
 |---|---|
-| `space` | toggle selection on the highlighted item |
+| `space` | toggle selection on the highlighted item (✔ mark) |
 | `a` | invert selection (select all ↔ none) |
 | `/` | filter the focused list (`enter` applies, `esc` clears) |
 | `o` | cycle sort field (name → size → time) |
@@ -177,7 +176,7 @@ lazys3 reads `$XDG_CONFIG_HOME/lazys3/config.yaml` (default `~/.config/lazys3/co
 # All keys are optional; the commented values show the built-in defaults.
 
 theme:
-  # Colors are hex strings: "#rgb", "#rrggbb" or "#rrggbbaa".
+  # Colors are hex strings: "#rgb" or "#rrggbb".
   # focused_border: "#20e71c"    # border of the focused pane
   # unfocused_border: "#555555"  # border of the unfocused pane (dual-pane mode)
   # title_fg: "#e39f00"          # status-bar profile chip foreground

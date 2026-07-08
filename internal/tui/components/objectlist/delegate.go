@@ -24,7 +24,7 @@ type selectionSet = map[string]bool
 // first, then mtime, then size — so the name always keeps at least
 // minNameWidth cells.
 const (
-	markerWidth  = 4  // "[x] "
+	markerWidth  = 2  // "✔ " selected, "  " unselected
 	sizeWidth    = 8  // "123.4M" right-aligned
 	mtimeWidth   = 16 // "2006-01-02 15:04"
 	classWidth   = 3  // "STD"
@@ -42,6 +42,7 @@ const (
 // mutable itself.
 type selectDelegate struct {
 	styles   list.DefaultItemStyles
+	marked   lipgloss.Style
 	selected *selectionSet
 	height   int
 	spacing  int
@@ -54,8 +55,15 @@ func newSelectDelegate(selected *selectionSet) selectDelegate {
 	if c := style.SelectedItemFg; c != nil {
 		styles.SelectedTitle = styles.SelectedTitle.Foreground(c).BorderForeground(c)
 	}
+	// Multi-selected rows render with a distinct foreground matching the
+	// ✔ mark; the theme's selected_fg override wins when set.
+	markFg := style.SelectedMarkFg
+	if c := style.SelectedItemFg; c != nil {
+		markFg = c
+	}
 	return selectDelegate{
 		styles:   styles,
+		marked:   styles.NormalTitle.Foreground(markFg),
 		selected: selected,
 		height:   1,
 		spacing:  0,
@@ -63,7 +71,7 @@ func newSelectDelegate(selected *selectionSet) selectDelegate {
 }
 
 // iconRuneIndexes returns the row-relative rune indexes of the icon glyph
-// (which sits right after the 4-rune marker), for lipgloss.StyleRunes.
+// (which sits right after the 2-rune marker), for lipgloss.StyleRunes.
 func iconRuneIndexes(icon string) []int {
 	idx := make([]int, 0, len([]rune(icon)))
 	for i := range []rune(icon) {
@@ -76,14 +84,11 @@ func (d selectDelegate) Height() int                             { return d.heig
 func (d selectDelegate) Spacing() int                            { return d.spacing }
 func (d selectDelegate) Update(_ tea.Msg, _ *list.Model) tea.Cmd { return nil }
 
-// markerFor returns the selection prefix for the given item title. The
-// prefix is a fixed-width 4-cell column so the rest of the row aligns
-// regardless of selection state.
-func (d selectDelegate) markerFor(title string) string {
-	if d.selected != nil && (*d.selected)[title] {
-		return "[x] "
-	}
-	return "[ ] "
+// isMarked reports whether the item title is toggled for multi-select.
+// The marker is a fixed-width 2-cell column ("✔ " marked, "  " not) so the
+// rest of the row aligns regardless of selection state.
+func (d selectDelegate) isMarked(title string) bool {
+	return d.selected != nil && (*d.selected)[title]
 }
 
 // shortStorageClass abbreviates an S3 storage class for the narrow class
@@ -200,7 +205,12 @@ func (d selectDelegate) Render(w io.Writer, m list.Model, index int, item list.I
 	if gap := nameWidth - lipgloss.Width(name); gap > 0 {
 		namePad = strings.Repeat(" ", gap)
 	}
-	row := d.markerFor(obj.name) + iconCol + name + namePad + meta
+	marked := d.isMarked(obj.name)
+	marker := "  "
+	if marked {
+		marker = "✔ "
+	}
+	row := marker + iconCol + name + namePad + meta
 
 	var (
 		isSelected  = index == m.Index()
@@ -236,15 +246,20 @@ func (d selectDelegate) Render(w io.Writer, m list.Model, index int, item list.I
 		}
 		row = s.SelectedTitle.Render(row)
 	default:
+		// Multi-selected rows are highlighted whole-row with the mark color.
+		rowStyle := s.NormalTitle
+		if marked {
+			rowStyle = d.marked
+		}
 		if isFiltered {
-			unmatched := s.NormalTitle.Inline(true)
+			unmatched := rowStyle.Inline(true)
 			matched := unmatched.Inherit(s.FilterMatch)
 			row = lipgloss.StyleRunes(row, matchedRunes, matched, unmatched)
 		} else if icon != "" && iconColor != nil {
-			base := s.NormalTitle.Inline(true)
+			base := rowStyle.Inline(true)
 			row = lipgloss.StyleRunes(row, iconRuneIndexes(icon), base.Foreground(iconColor), base)
 		}
-		row = s.NormalTitle.Render(row)
+		row = rowStyle.Render(row)
 	}
 
 	fmt.Fprintf(w, "%s", row) //nolint:errcheck

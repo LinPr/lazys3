@@ -21,7 +21,7 @@ import (
 )
 
 // Theme overrides the style package's package-level colors. Values are hex
-// strings like "#20e71c" (3-, 6- or 8-digit); empty keeps the default.
+// strings like "#20e71c" (3- or 6-digit); empty keeps the default.
 type Theme struct {
 	FocusedBorder   string `yaml:"focused_border"`
 	UnfocusedBorder string `yaml:"unfocused_border"`
@@ -148,8 +148,10 @@ func LoadFrom(path string) Config {
 	return cfg
 }
 
-// hexColorRe accepts the hex forms lipgloss parses: #rgb, #rrggbb, #rrggbbaa.
-var hexColorRe = regexp.MustCompile(`^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$`)
+// hexColorRe accepts the hex forms lipgloss parses: #rgb and #rrggbb.
+// 8-digit #rrggbbaa is rejected here because lipgloss.Color silently
+// turns it into NoColor.
+var hexColorRe = regexp.MustCompile(`^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$`)
 
 func validColor(key, v string) string {
 	if v == "" || hexColorRe.MatchString(v) {
@@ -208,7 +210,7 @@ const defaultFile = `# lazys3 configuration.
 # All keys are optional; the commented values show the built-in defaults.
 
 theme:
-  # Colors are hex strings: "#rgb", "#rrggbb" or "#rrggbbaa".
+  # Colors are hex strings: "#rgb" or "#rrggbb".
   # focused_border: "#20e71c"    # border of the focused pane
   # unfocused_border: "#555555"  # border of the unfocused pane (dual-pane mode)
   # title_fg: "#e39f00"          # status-bar profile chip foreground

@@ -114,13 +114,18 @@ func TestIconFilterHighlightLandsOnName(t *testing.T) {
 }
 
 // TestOffRenderHasNoIcon guards the opt-in: with nerd_font off (the
-// default), the rendered row contains no icon column at all.
+// default), the rendered row contains no icon column at all — the marker
+// column sits directly before the name.
 func TestOffRenderHasNoIcon(t *testing.T) {
 	m := NewModel()
 	m.SetSize(80, 20)
 	m = load(t, m, sampleDir(t))
+	m.ToggleSelected() // cursor on data/ (dirs sort first)
 	out := ansi.Strip(m.View())
-	if !strings.Contains(out, "[ ] data/") || !strings.Contains(out, "[ ] zeta.txt") {
-		t.Errorf("nerd_font off: expected marker directly before names, got:\n%s", out)
+	if !strings.Contains(out, "✔ data/") {
+		t.Errorf("nerd_font off: expected ✔ marker directly before selected name, got:\n%s", out)
+	}
+	if !strings.Contains(out, "  zeta.txt") || strings.Contains(out, "✔ zeta.txt") {
+		t.Errorf("nerd_font off: expected blank 2-cell marker before unselected name, got:\n%s", out)
 	}
 }

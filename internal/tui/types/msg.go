@@ -31,8 +31,10 @@ type SyncPollMsg struct {
 	// FilesDone counts files whose transfer completed.
 	FilesDone int
 	// CurrentFile is the file most recently reported by the progress
-	// callback; Bytes/Total are its byte progress (Total 0 for deletes,
-	// -1 when unknown).
+	// callback. Bytes/Total are the sync's AGGREGATE byte progress over
+	// the whole plan (deletes excluded) once the plan is known; before
+	// planning finishes they are the last raw per-file pair (Total 0 for
+	// deletes, -1 when unknown).
 	CurrentFile string
 	Bytes       int64
 	Total       int64

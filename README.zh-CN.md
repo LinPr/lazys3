@@ -34,8 +34,8 @@
 **版本与分享**
 
 - 预签名分享 URL（`Y`），有效期可配（1s..168h，默认 1h），生成后直接复制到剪贴板
-- 对象版本（`v`）：下载、恢复或删除指定版本
-- 切换 bucket 版本控制（`V`）：Enabled ⇄ Suspended
+- 对象版本（对象列表按 `v`）：下载、恢复或删除指定版本
+- 切换 bucket 版本控制（bucket 列表按 `v`）：Enabled ⇄ Suspended
 - 复制路径（`y`）：bucket/对象的 `s3://` URI，或本地条目的绝对路径
 
 **体验**
@@ -56,7 +56,7 @@
 | `q` | 退出 lazys3 |
 | `ctrl+c` | 强制退出 |
 | `?` | 开关帮助浮层 |
-| `t` | 开关实时传输浮层（最新在前，可滚动） |
+| `t` | 开关实时传输浮层（最新在前；`enter`：sync 逐文件明细，`←`/`→` 横向滚动宽表格） |
 | `x` | 取消最近一个正在运行的传输（传输浮层内：取消高亮的那个） |
 | `l` | 开关双栏布局（本地 ⇄ 远端，需要 ≥80 列） |
 | `tab` | 在远端栏和本地栏之间切换焦点（双栏模式） |
@@ -79,8 +79,7 @@
 | `s` | 目录同步（本地 ⇄ s3、s3 ⇄ s3；双栏模式自动预填两侧） |
 | `y` | 复制高亮 bucket/对象的 `s3://` URI 到剪贴板 |
 | `Y` | 生成预签名分享 URL（仅对象文件） |
-| `v` | 对象版本（下载 / 恢复 / 删除某个版本） |
-| `V` | 切换 bucket 版本控制（Enabled ⇄ Suspended，bucket 列表） |
+| `v` | 对象版本（对象列表）/ 切换 bucket 版本控制 Enabled ⇄ Suspended（bucket 列表） |
 | `g` | 路径直达：`s3://bucket/prefix/` 可切换 bucket，`/path` 从 bucket 根开始，`rel/path` 相对当前前缀 |
 
 ### 本地栏
@@ -101,7 +100,7 @@
 
 | 按键 | 作用 |
 |---|---|
-| `space` | 切换高亮条目的选中状态 |
+| `space` | 切换高亮条目的选中状态（✔ 标记） |
 | `a` | 反选（全选 ↔ 全不选） |
 | `/` | 过滤当前列表（`enter` 应用，`esc` 清除） |
 | `o` | 循环切换排序字段（名称 → 大小 → 时间） |
@@ -177,7 +176,7 @@ lazys3 读取 `$XDG_CONFIG_HOME/lazys3/config.yaml`（默认 `~/.config/lazys3/c
 # All keys are optional; the commented values show the built-in defaults.
 
 theme:
-  # Colors are hex strings: "#rgb", "#rrggbb" or "#rrggbbaa".
+  # Colors are hex strings: "#rgb" or "#rrggbb".
   # focused_border: "#20e71c"    # border of the focused pane
   # unfocused_border: "#555555"  # border of the unfocused pane (dual-pane mode)
   # title_fg: "#e39f00"          # status-bar profile chip foreground

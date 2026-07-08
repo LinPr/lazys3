@@ -43,6 +43,24 @@ type SyncOptions struct {
 	// PartSize is the multipart part size used for large uploads, in
 	// bytes. When non-positive the s3manager default (5 MiB) is used.
 	PartSize int64
+	// OnPlan, when non-nil, is invoked exactly once after the source and
+	// destination listings are merge-compared, with every planned action:
+	// each to-transfer file (nested relative paths included, Size set) and
+	// — when Delete is set — each planned delete (Delete true, Size 0).
+	// Skipped files are not reported. It runs on the Sync goroutine before
+	// any task is submitted (dry-run included); a ctx cancel during
+	// planning truncates the plan it receives.
+	OnPlan func(files []PlannedTransfer)
+}
+
+// PlannedTransfer is one entry of a sync plan as reported to
+// SyncOptions.OnPlan: the file's source-relative path (the same rel the
+// progress callback later reports), its size in bytes, and whether the
+// planned action is a delete rather than a transfer.
+type PlannedTransfer struct {
+	Rel    string
+	Size   int64
+	Delete bool
 }
 
 // SyncResult summarises a Sync run. Counts are best-effort: each
@@ -63,10 +81,12 @@ type SyncResult struct {
 // SyncProgressFunc receives per-file progress events during Sync. It is
 // an alias so existing func literals keep compiling. transferredBytes /
 // totalBytes are byte counts for that file; see (*Storage).Sync for the
-// per-direction semantics. transferredBytes == totalBytes (with
+// per-direction semantics. transferredBytes >= totalBytes (with
 // totalBytes >= 0) is reported exactly once per file, after that file's
-// transfer succeeded — mid-stream reports never reach totalBytes, so
-// consumers may treat it as the file's completion event.
+// transfer succeeded — mid-stream reports never reach totalBytes, and
+// the terminal report snaps totalBytes down to the actual count when the
+// object shrank below its listed size — so consumers may treat it as the
+// file's completion event. A failed task never produces it.
 type SyncProgressFunc = func(file string, transferredBytes, totalBytes int64)
 
 // syncTracker adapts the per-file Sync progress callback into a byte
@@ -117,7 +137,7 @@ type syncObject struct {
 // The progress callback, when non-nil, is invoked during each file's
 // transfer (throttled to at most one call per 100ms per file) with the
 // file's relative path and the per-file transferred/total byte counts,
-// and once more at completion with transferred == total. Uploads and
+// and once more at completion with transferred >= total. Uploads and
 // downloads report real byte progress; server-side CopyObject transfers
 // no bytes through the client, so s3→s3 copies report a single
 // completion call with (size, size). Deletes report (0, 0) on
@@ -417,13 +437,22 @@ const (
 	kindDelete
 )
 
+// plannedTask pairs a built parallel.Task with its kind so the plan
+// phase can be separated from the submit phase.
+type plannedTask struct {
+	task parallel.Task
+	kind transferKind
+}
+
 // planAndRun is the canonical sync flow:
 //
 //  1. Build exclude/include regexps from the user's glob patterns.
-//  2. Merge-compare the two sorted slices by relative path.
-//  3. For only-in-src (and common pairs the strategy says differ),
-//     submit a transfer task via the parallel.Manager.
-//  4. For only-in-dst, when opt.Delete is set, submit a delete task.
+//  2. Merge-compare the two sorted slices by relative path into a plan:
+//     only-in-src (and common pairs the strategy says differ) become
+//     transfer tasks; only-in-dst becomes a delete task when opt.Delete
+//     is set.
+//  3. Report the whole plan to opt.OnPlan (exactly once, when non-nil).
+//  4. Submit the planned tasks via the parallel.Manager.
 //
 // All task submission happens on the main goroutine so the result
 // counters are never written from a worker — workers only return
@@ -479,10 +508,14 @@ func (s *Storage) planAndRun(
 		}
 	}
 
+	var (
+		planned []plannedTask
+		plan    []PlannedTransfer
+	)
 	i, j := 0, 0
 	for i < len(srcObjects) || j < len(dstObjects) {
-		// Stop scheduling new tasks once the context is cancelled; the
-		// in-flight ones abort on their own ctx checks / SDK calls.
+		// Stop planning new tasks once the context is cancelled; the
+		// submit loop below stops too.
 		if ctx.Err() != nil {
 			break
 		}
@@ -538,11 +571,8 @@ func (s *Storage) planAndRun(
 				continue
 			}
 			task, kind := buildDeleteTask(dstObj)
-			bump(kind)
-			if opt.DryRun {
-				continue
-			}
-			mgr.Run(task, waiter)
+			planned = append(planned, plannedTask{task: task, kind: kind})
+			plan = append(plan, PlannedTransfer{Rel: rel, Delete: true})
 			continue
 		}
 
@@ -551,11 +581,25 @@ func (s *Storage) planAndRun(
 			continue
 		}
 		task, kind := buildTransferTask(srcObj, dstObj)
-		bump(kind)
+		planned = append(planned, plannedTask{task: task, kind: kind})
+		plan = append(plan, PlannedTransfer{Rel: rel, Size: srcObj.size})
+	}
+
+	if opt.OnPlan != nil {
+		opt.OnPlan(plan)
+	}
+
+	for _, p := range planned {
+		// Stop submitting once the context is cancelled; in-flight tasks
+		// abort on their own ctx checks / SDK calls.
+		if ctx.Err() != nil {
+			break
+		}
+		bump(p.kind)
 		if opt.DryRun {
 			continue
 		}
-		mgr.Run(task, waiter)
+		mgr.Run(p.task, waiter)
 	}
 
 	mgr.Close()
@@ -607,7 +651,7 @@ func (s *Storage) syncLocalToS3(
 			if _, err := s.remote.UploadObjectWithPartSize(ctx, body, dstBucket, dstKey, opt.PartSize); err != nil {
 				return fmt.Errorf("upload %s -> s3://%s/%s: %w", srcPath, dstBucket, dstKey, err)
 			}
-			tracker.finish()
+			tracker.finishComplete()
 			return nil
 		}
 		return task, kindUpload
@@ -682,7 +726,7 @@ func (s *Storage) syncS3ToLocal(
 			if err := s.downloadFileTo(ctx, srcBucket, srcKey, dstPath, tracker); err != nil {
 				return fmt.Errorf("download s3://%s/%s -> %s: %w", srcBucket, srcKey, dstPath, err)
 			}
-			tracker.finish()
+			tracker.finishComplete()
 			return nil
 		}
 		return task, kindDownload

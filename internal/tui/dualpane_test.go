@@ -414,13 +414,13 @@ func TestLocalFilterSwallowsGlobalHotkeys(t *testing.T) {
 }
 
 // TestRemoteOnlyKeyHintWhenLocalFocused pins that the remaining remote-only
-// keys (v/V) pressed with local focus produce a status-bar hint and never
+// keys (v) pressed with local focus produce a status-bar hint and never
 // leak into the local list.
 func TestRemoteOnlyKeyHintWhenLocalFocused(t *testing.T) {
 	m, _ := dualModel(t, "a.txt")
 	m = updateModel(t, m, tabPress())
 
-	for _, k := range []rune{'v', 'V'} {
+	for _, k := range []rune{'v'} {
 		m.statusBar.SetInfo("")
 		m = updateModel(t, m, keyPress(k))
 		if m.modal.IsVisible() {

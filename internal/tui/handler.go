@@ -607,6 +607,19 @@ func errCmd(err error) tea.Cmd {
 	}
 }
 
+// handleVersionsKey dispatches the state-dependent 'v' key: the versions
+// overlay in the object list, the bucket-versioning toggle flow in the
+// bucket list, a no-op anywhere else (profile list).
+func (m *Model) handleVersionsKey() tea.Cmd {
+	switch m.state {
+	case state.ActiveObjectList:
+		return m.handleVersionsOpen()
+	case state.ActiveBucketList:
+		return m.handleVersioningToggle()
+	}
+	return nil
+}
+
 // handleVersionsOpen opens the object-versions overlay ('v') for the
 // highlighted file. A directory or nil selection surfaces a status-bar
 // error instead (prefixes have no version history of their own).
@@ -622,7 +635,7 @@ func (m *Model) handleVersionsOpen() tea.Cmd {
 	return m.versionView.Show(opt, m.selectedBucket, obj.Name())
 }
 
-// handleVersioningToggle ('V' in the bucket list) kicks off the async
+// handleVersioningToggle ('v' in the bucket list) kicks off the async
 // GetBucketVersioning probe; the confirm modal opens when BucketStatusMsg
 // arrives (see handleBucketStatus) so the current status is shown in it.
 func (m *Model) handleVersioningToggle() tea.Cmd {
@@ -1006,12 +1019,19 @@ func syncTransferCmd(src, dst, label string, flags syncmodal.Flags, conn connPar
 	storageOpt := storage.NewStorageOption(s3opt, fsstore.LocalOption{})
 	ctx, cancel := context.WithCancel(context.Background())
 
+	// The row's shared Progress receives the AGGREGATE directory bytes
+	// (whole-plan done/total) from syncmodal once planning finishes, so the
+	// row bar tracks the directory, not the current file; until then it
+	// stays indeterminate (-1 total).
+	prog := transferpanel.NewProgress()
+
 	add := addTransferCmd(transferpanel.Transfer{
-		ID:     id,
-		Op:     transferpanel.OpSync,
-		Label:  label,
-		Status: transferpanel.StatusRunning,
-		Cancel: cancel,
+		ID:       id,
+		Op:       transferpanel.OpSync,
+		Label:    label,
+		Status:   transferpanel.StatusRunning,
+		Cancel:   cancel,
+		Progress: prog,
 	})
 
 	syncCmd := syncmodal.NewCmd(syncmodal.CmdDeps{
@@ -1024,6 +1044,7 @@ func syncTransferCmd(src, dst, label string, flags syncmodal.Flags, conn connPar
 		Flags:      flags,
 		TransferID: id,
 		Label:      label,
+		Progress:   prog,
 	})
 
 	poll := tea.Every(200*time.Millisecond, syncmodal.PollCmd(id))

@@ -217,30 +217,42 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.emitStatusUpdate())
 			return m, tea.Batch(cmds...)
 		}
-		// Transfers overlay: 't'/esc closes, j/k/pgup/pgdown/g/G move the
-		// cursor over the live rows, and 'x' cancels the HIGHLIGHTED
-		// transfer (outside the overlay 'x' keeps its cancel-latest
-		// meaning). Everything else is swallowed. The overlay itself is
-		// stateless about transfers: composeView renders it from the
-		// transferpanel's live rows each frame, so the 200ms tick loop
-		// keeps its progress moving while it is open.
+		// Transfers overlay: 't' closes, esc closes (or backs out of the
+		// per-file detail first), j/k/pgup/pgdown/g/G move the cursor over
+		// the live rows, ←/→ scroll the table horizontally when it
+		// overflows, enter opens/closes the per-file detail of a sync row,
+		// and 'x' cancels the HIGHLIGHTED transfer (outside the overlay 'x'
+		// keeps its cancel-latest meaning; inside the detail it is
+		// swallowed — the highlight is a file, not a transfer). Everything
+		// else is swallowed. The overlay itself is stateless about
+		// transfers: composeView renders it from the transferpanel's live
+		// rows each frame, so the 200ms tick loop keeps its progress moving
+		// while it is open.
 		if m.transferView.IsVisible() {
 			key := keybinding.KeyString(msg.String())
+			rows := m.transferPanel.Rows()
 			switch {
-			case key == keybinding.TransfersToggle || msg.String() == "esc":
+			case key == keybinding.TransfersToggle:
 				m.transferView.Hide()
-			case key == keybinding.TransferCancel:
+			case msg.String() == "esc":
+				if m.transferView.InDetail() {
+					m.transferView.CloseDetail()
+				} else {
+					m.transferView.Hide()
+				}
+			case msg.String() == "enter":
+				m.transferView.HandleEnter(rows)
+			case key == keybinding.TransferCancel && !m.transferView.InDetail():
 				// Clamp the cursor the same way View clamps the highlight:
 				// pruning can shrink the rows between keys, and 'x' must
 				// cancel the row the user SEES highlighted, not no-op.
-				rows := m.transferPanel.Rows()
 				if c := min(m.transferView.Cursor(), len(rows)-1); c >= 0 {
 					if m.transferPanel.CancelByID(rows[c].ID) {
 						log.Println("cancelled transfer:", rows[c].ID)
 					}
 				}
 			default:
-				m.transferView.HandleKey(key, len(m.transferPanel.Rows()))
+				m.transferView.HandleKey(key, rows)
 			}
 			cmds = append(cmds, m.emitStatusUpdate())
 			return m, tea.Batch(cmds...)
@@ -406,28 +418,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.help.Toggle()
 				return m, m.emitStatusUpdate()
 
-			// v opens the object-versions overlay for the highlighted file
-			// (object list only; directories error on the status bar).
+			// v is state-dependent (handleVersionsKey): object list →
+			// object-versions overlay for the highlighted file (directories
+			// error on the status bar); bucket list → the bucket-versioning
+			// toggle flow (status fetched first, the confirm modal opens
+			// when the BucketStatusMsg arrives); profile list → no-op.
 			case keybinding.VersionsToggle:
 				if m.localFocused() {
 					m.statusBar.SetInfo(remotePaneKeyHint)
 					return m, m.emitStatusUpdate()
 				}
-				if cmd := m.handleVersionsOpen(); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
-				cmds = append(cmds, m.emitStatusUpdate())
-				return m, tea.Batch(cmds...)
-
-			// V toggles bucket versioning on the highlighted bucket. The
-			// current status is fetched first; the confirm modal opens when
-			// the BucketStatusMsg arrives.
-			case keybinding.VersioningToggle:
-				if m.localFocused() {
-					m.statusBar.SetInfo(remotePaneKeyHint)
-					return m, m.emitStatusUpdate()
-				}
-				if cmd := m.handleVersioningToggle(); cmd != nil {
+				if cmd := m.handleVersionsKey(); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
 				cmds = append(cmds, m.emitStatusUpdate())

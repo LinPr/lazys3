@@ -99,6 +99,27 @@ func (t *progressTracker) finish() {
 	t.fn(transferred, t.total)
 }
 
+// finishComplete is finish for consumers that treat transferred >= total
+// (total non-negative) as the completion event (sync): when the object
+// shrank between listing and transfer the terminal count sits below the
+// planned total — and an unknown total never satisfies the contract at
+// all — so the report snaps total to the actual count in both cases.
+// Only call it after the operation succeeded.
+func (t *progressTracker) finishComplete() {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	transferred := t.transferred
+	t.lastReport = time.Now()
+	t.mu.Unlock()
+	total := t.total
+	if total < 0 || total > transferred {
+		total = transferred
+	}
+	t.fn(transferred, total)
+}
+
 // progressReader counts bytes flowing through Read.
 type progressReader struct {
 	r io.Reader

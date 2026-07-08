@@ -2,7 +2,7 @@
 //
 // Keys already claimed by the global dispatcher (tui.go): q, ctrl+c,
 // enter, right, backspace, left, p, m, t, g, ?, space, a, d, u, D, r, c,
-// B, s, x, y, Y, v, V, l, tab.
+// B, s, x, y, Y, v, l, tab.
 // The object-list component additionally claims the keys below; they are
 // exported so the help overlay and the component reference one source of
 // truth.
@@ -68,13 +68,11 @@ const (
 	// handled in tui.go).
 	Metadata = "m"
 
-	// VersionsToggle opens/closes the object-versions overlay for the
-	// highlighted file (global, handled in tui.go).
+	// VersionsToggle is the state-dependent versions key (global, handled
+	// in tui.go): in the object list it opens/closes the object-versions
+	// overlay for the highlighted file; in the bucket list it toggles
+	// bucket versioning (Enabled <-> Suspended) on the highlighted bucket.
 	VersionsToggle = "v"
-
-	// VersioningToggle (shift+v) toggles bucket versioning
-	// (Enabled <-> Suspended) on the highlighted bucket.
-	VersioningToggle = "V"
 
 	// DualPaneToggle enters/exits the dual-pane (local ⇄ remote) layout
 	// (global, handled in tui.go; mnemonic: local).

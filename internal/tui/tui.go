@@ -67,6 +67,9 @@ type Model struct {
 	localList locallist.Model
 	dualPane  bool
 	paneFocus paneFocus
+	// mouseEnabled controls whether the TUI captures mouse events.
+	// Toggle with M: disabling lets the user select and copy terminal text.
+	mouseEnabled bool
 	// lastStatus is the last StatusUpdateMsg emitted. emitStatusUpdate
 	// only publishes when the status actually changed; emitting
 	// unconditionally would make every StatusUpdateMsg pass spawn the
@@ -134,6 +137,7 @@ func NewLazyS3ModelWithConfig(cfg config.Config, awsFiles config.AWSFiles) Model
 		transferView:  transferview.NewModel(),
 		versionView:   versionview.NewModel(),
 		localList:     localList,
+		mouseEnabled:  false,
 	}
 }
 
@@ -385,6 +389,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				cmds = append(cmds, m.emitStatusUpdate())
 				return m, tea.Batch(cmds...)
+
+			// M toggles mouse capture so the user can select/copy terminal text.
+			case keybinding.MouseToggle:
+				m.mouseEnabled = !m.mouseEnabled
+				return m, m.emitStatusUpdate()
 
 			// t opens the live transfers overlay (closing is handled in
 			// the transferView.IsVisible branch above).
@@ -880,7 +889,9 @@ func (m Model) View() tea.View {
 	view := tea.NewView(m.viewContent())
 	view.AltScreen = true
 	view.ReportFocus = true
-	view.MouseMode = tea.MouseModeCellMotion
+	if m.mouseEnabled {
+		view.MouseMode = tea.MouseModeCellMotion
+	}
 	return view
 }
 
@@ -908,6 +919,7 @@ func (m Model) composeView(mainContent string) string {
 	// without routing byte counters through the deduped StatusUpdateMsg.
 	bar := m.statusBar
 	bar.SetTransferStats(m.transferPanel.Stats())
+	bar.SetLoading(m.bucketList.Loading() || m.objectlist.Loading())
 	layout := lipgloss.JoinVertical(
 		lipgloss.Top,
 		mainContent,

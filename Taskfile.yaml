@@ -12,9 +12,9 @@ tasks:
     deps:
       - build
 
-  build: 
+  build:
     cmds:
-      - go build .
+      - go build -ldflags "-X github.com/LinPr/lazys3/cmd.Version=$(git describe --tags --always --dirty)" .
     desc: Build binary
 
   lint:

@@ -593,13 +593,30 @@ func (m Model) Stats() types.TransferStats {
 		default:
 			continue
 		}
-		if t.Op != OpUpload && t.Op != OpDownload {
-			continue
-		}
 		if t.Op == OpUpload {
 			s.UpActive++
-		} else {
+		} else if t.Op == OpDownload {
 			s.DownActive++
+		} else if t.Progress != nil {
+			s.OtherActive++
+			done, total := t.Done, t.Total
+			if t.Progress != nil {
+				done, total = t.Progress.Load()
+			}
+			if total > 0 {
+				if t.Op == OpSync {
+					// sync reports aggregate bytes; fold into the shared byte counters
+					s.BytesTotal += total
+					s.BytesDone += min(done, total)
+				} else {
+					// delete-prefix reports item counts (objects deleted / total)
+					s.OtherDone += done
+					s.OtherTotal += total
+				}
+			}
+			continue
+		} else {
+			continue
 		}
 		done, total := t.Done, t.Total
 		if t.Progress != nil {
@@ -722,8 +739,8 @@ func bar(done, total int64, frame int) string {
 		if pos > span {
 			pos = 2*span - pos
 		}
-		return strings.Repeat(" ", pos) + strings.Repeat("█", block) +
-			strings.Repeat(" ", width-block-pos)
+		return strings.Repeat("░", pos) + strings.Repeat("█", block) +
+			strings.Repeat("░", width-block-pos)
 	}
 	pct := float64(done) / float64(total)
 	if pct < 0 {
@@ -735,7 +752,7 @@ func bar(done, total int64, frame int) string {
 	if filled > width {
 		filled = width
 	}
-	return strings.Repeat("█", filled) + strings.Repeat(" ", width-filled)
+	return strings.Repeat("█", filled) + strings.Repeat("░", width-filled)
 }
 
 // percent renders " NN%" when the total is known, else "".

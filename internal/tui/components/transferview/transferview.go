@@ -393,8 +393,8 @@ func bar(done, total int64, frame int) string {
 		if pos > span {
 			pos = 2*span - pos
 		}
-		return strings.Repeat(" ", pos) + strings.Repeat("█", block) +
-			strings.Repeat(" ", barWidth-block-pos)
+		return strings.Repeat("░", pos) + strings.Repeat("█", block) +
+			strings.Repeat("░", barWidth-block-pos)
 	}
 	pct := float64(done) / float64(total)
 	if pct < 0 {
@@ -406,7 +406,7 @@ func bar(done, total int64, frame int) string {
 	if filled > barWidth {
 		filled = barWidth
 	}
-	return strings.Repeat("█", filled) + strings.Repeat(" ", barWidth-filled)
+	return strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
 }
 
 // percent renders "NN%" clamped to 0..100.

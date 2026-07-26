@@ -36,7 +36,11 @@ func newProgressTracker(total int64, fn ProgressFunc) *progressTracker {
 	if fn == nil {
 		return nil
 	}
-	return &progressTracker{fn: fn, total: total, interval: defaultProgressInterval}
+	t := &progressTracker{fn: fn, total: total, interval: defaultProgressInterval}
+	if total > 0 {
+		fn(0, total) // pre-set total so the status-bar bar is determinate from the start
+	}
+	return t
 }
 
 // add records n more transferred bytes and fires the callback when the

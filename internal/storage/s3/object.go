@@ -334,13 +334,17 @@ const deleteBatchSize = 1000
 // with no keys is a no-op returning 0. An empty prefix is rejected:
 // unlike a listing, "recursively delete the whole bucket" is never what
 // a directory-row delete means, so the scope guard refuses it.
-func (s3store *S3Store) DeletePrefix(ctx context.Context, bucket, prefix string) (int, error) {
+func (s3store *S3Store) DeletePrefix(ctx context.Context, bucket, prefix string, onProgress func(deleted, total int)) (int, error) {
 	if prefix == "" {
 		return 0, fmt.Errorf("recursive delete: empty prefix would delete every object in %s; refusing", bucket)
 	}
 	keys, err := s3store.ListAllObjects(ctx, bucket, prefix)
 	if err != nil {
 		return 0, err
+	}
+	total := len(keys)
+	if onProgress != nil {
+		onProgress(0, total) // pre-set total so the progress bar is determinate from the start
 	}
 	deleted := 0
 	for start := 0; start < len(keys); start += deleteBatchSize {
@@ -350,6 +354,9 @@ func (s3store *S3Store) DeletePrefix(ctx context.Context, bucket, prefix string)
 		end := min(start+deleteBatchSize, len(keys))
 		n, err := s3store.deleteObjectsCounted(ctx, bucket, keys[start:end])
 		deleted += n
+		if onProgress != nil {
+			onProgress(deleted, total)
+		}
 		if err != nil {
 			return deleted, err
 		}

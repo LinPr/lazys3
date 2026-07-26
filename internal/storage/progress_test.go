@@ -39,20 +39,27 @@ func TestProgressTrackerNilCallback(t *testing.T) {
 
 func TestProgressTrackerThrottles(t *testing.T) {
 	tr, got := collectTracker(1000, time.Hour)
+	// newProgressTracker fires fn(0, total) immediately to pre-set the total.
+	if len(*got) != 1 {
+		t.Fatalf("callbacks after construction = %d, want 1 (initial pre-set)", len(*got))
+	}
+	if (*got)[0] != (record{0, 1000}) {
+		t.Errorf("initial callback = %+v, want {0 1000}", (*got)[0])
+	}
 	for i := 0; i < 100; i++ {
 		tr.add(10)
 	}
 	// The first add reports (lastReport is zero), then the hour-long
 	// interval suppresses the rest.
-	if len(*got) != 1 {
-		t.Fatalf("callbacks = %d, want 1 (throttled)", len(*got))
+	if len(*got) != 2 {
+		t.Fatalf("callbacks after 100 adds = %d, want 2 (initial + first add)", len(*got))
 	}
-	if (*got)[0] != (record{10, 1000}) {
-		t.Errorf("first callback = %+v, want {10 1000}", (*got)[0])
+	if (*got)[1] != (record{10, 1000}) {
+		t.Errorf("first add callback = %+v, want {10 1000}", (*got)[1])
 	}
 	tr.finish()
-	if len(*got) != 2 {
-		t.Fatalf("callbacks after finish = %d, want 2", len(*got))
+	if len(*got) != 3 {
+		t.Fatalf("callbacks after finish = %d, want 3", len(*got))
 	}
 	if last := (*got)[len(*got)-1]; last != (record{1000, 1000}) {
 		t.Errorf("final callback = %+v, want {1000 1000}", last)

@@ -74,6 +74,11 @@ const (
 	// bucket versioning (Enabled <-> Suspended) on the highlighted bucket.
 	VersionsToggle = "v"
 
+	// MouseToggle enables/disables mouse capture so the user can select
+	// and copy terminal text. When mouse is off, all mouse interactions
+	// (click to focus, scroll) stop working until toggled back on.
+	MouseToggle = "M"
+
 	// DualPaneToggle enters/exits the dual-pane (local ⇄ remote) layout
 	// (global, handled in tui.go; mnemonic: local).
 	DualPaneToggle = "l"

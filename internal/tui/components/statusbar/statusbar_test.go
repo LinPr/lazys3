@@ -70,7 +70,7 @@ func TestStatusBarSegmentsAt80Cols(t *testing.T) {
 		t.Fatalf("View() width = %d, want exactly 80", w)
 	}
 	plain := ansi.Strip(view)
-	for _, want := range []string{"dev", "local", "3 selected", "[####----]", "^1/2", "x1", "? help", "…"} {
+	for _, want := range []string{"dev", "local", "3 selected", "[████░░░░]", "^1/2", "x1", "? help", "…"} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("View() missing %q: %q", want, plain)
 		}
@@ -117,7 +117,7 @@ func TestTransferSegmentRunning(t *testing.T) {
 	})
 
 	plain := ansi.Strip(m.View())
-	for _, want := range []string{"[##------]", "^1/2", "v0/1"} {
+	for _, want := range []string{"[██░░░░░░]", "^1/2", "v0/1"} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("running segment missing %q: %q", want, plain)
 		}
@@ -155,12 +155,12 @@ func TestTransferSegmentIndeterminate(t *testing.T) {
 	m.SetSize(80, 1)
 	m.SetTransferStats(types.TransferStats{UpActive: 1, UpTotal: 1, Frame: 0})
 	first := ansi.Strip(m.View())
-	if !strings.Contains(first, "[###-----]") {
+	if !strings.Contains(first, "[███░░░░░]") {
 		t.Errorf("indeterminate bar missing at frame 0: %q", first)
 	}
 	m.SetTransferStats(types.TransferStats{UpActive: 1, UpTotal: 1, Frame: 2})
 	second := ansi.Strip(m.View())
-	if !strings.Contains(second, "[--###---]") {
+	if !strings.Contains(second, "[░░███░░░]") {
 		t.Errorf("indeterminate bar did not bounce with the frame: %q", second)
 	}
 }

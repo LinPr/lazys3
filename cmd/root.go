@@ -31,7 +31,7 @@ func NewRootCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "lazys3",
 		Short:   "A tui tool to operate S3 asserts.",
-		Version: "",
+		Version: Version,
 		Args:    cobra.MaximumNArgs(1),
 
 		Run: func(cmd *cobra.Command, args []string) {

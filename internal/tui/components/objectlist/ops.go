@@ -113,6 +113,27 @@ func UploadCmd(ctx context.Context, opt Option, localPath, transferID string, pr
 	}
 }
 
+// UploadToKeyCmd uploads a local file to an explicit bucket/key (no
+// basename derivation). Used by the directory-upload path in handler.go
+// where the key already incorporates the relative sub-directory structure.
+func UploadToKeyCmd(ctx context.Context, opt Option, localPath, key, transferID string, prog *transferpanel.Progress) tea.Cmd {
+	return func() tea.Msg {
+		done := func(err error) tea.Msg {
+			return transferpanel.TransferDoneMsg{ID: transferID, Err: err, Op: transferpanel.OpUpload, Label: labelForOp(opt, localPath, "->", key)}
+		}
+		bucket, _, err := bucketFromOption(opt)
+		if err != nil {
+			return done(err)
+		}
+		st, err := newStorageFromOption(ctx, opt)
+		if err != nil {
+			return done(err)
+		}
+		_, err = st.UploadFileWithProgress(ctx, localPath, bucket, key, progressFunc(prog))
+		return done(err)
+	}
+}
+
 // DeleteCmd deletes the given keys from the bucket. The keys slice carries
 // the whole multi-selection in display order.
 func DeleteCmd(ctx context.Context, opt Option, keys []string, transferID string) tea.Cmd {
@@ -138,7 +159,7 @@ func DeleteCmd(ctx context.Context, opt Option, keys []string, transferID string
 // between batches). The done message carries a final "N object(s)
 // deleted" note for the transfer row — an empty prefix reports
 // "0 object(s) deleted"; per-batch note updates are a later iteration.
-func DeletePrefixCmd(ctx context.Context, opt Option, prefix, transferID string) tea.Cmd {
+func DeletePrefixCmd(ctx context.Context, opt Option, prefix, transferID string, prog *transferpanel.Progress) tea.Cmd {
 	return func() tea.Msg {
 		done := func(n int, err error) tea.Msg {
 			return transferpanel.TransferDoneMsg{
@@ -157,7 +178,13 @@ func DeletePrefixCmd(ctx context.Context, opt Option, prefix, transferID string)
 		if err != nil {
 			return done(0, err)
 		}
-		n, err := cli.DeletePrefix(ctx, bucket, prefix)
+		var onProgress func(deleted, total int)
+		if prog != nil {
+			onProgress = func(deleted, total int) {
+				prog.Report(int64(deleted), int64(total))
+			}
+		}
+		n, err := cli.DeletePrefix(ctx, bucket, prefix, onProgress)
 		return done(n, err)
 	}
 }

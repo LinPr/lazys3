@@ -154,6 +154,7 @@ func DefaultBindings() []Group {
 		{
 			Name: "Global",
 			Bindings: []Binding{
+				{Key: "M", Desc: "toggle mouse capture (on = click/scroll work; off = select/copy terminal text freely)"},
 				{Key: "q", Desc: "quit lazys3"},
 				{Key: "ctrl+c", Desc: "force quit"},
 				{Key: "?", Desc: "toggle this help overlay"},

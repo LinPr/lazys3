@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"path"
 	"path/filepath"
 	"strings"
@@ -261,23 +262,56 @@ func downloadCmds(opt objectlist.Option, bucket string, objs []objectlist.Object
 // promptDownload opens a modal for downloading the current selection. A
 // single file prompts for a destination path; a multi-selection prompts
 // for a destination directory and spawns one transfer row per object.
+// Directory prefixes are downloaded recursively via the sync engine.
 func (m *Model) promptDownload() tea.Cmd {
-	var files []objectlist.Object
+	var files, dirs []objectlist.Object
 	for _, o := range m.objectlist.SelectedObjects() {
-		if !o.IsDir() {
+		if o.IsDir() {
+			dirs = append(dirs, o)
+		} else {
 			files = append(files, o)
 		}
 	}
-	if len(files) == 0 {
+	if len(files) == 0 && len(dirs) == 0 {
 		obj := m.objectlist.GetSelectedObject()
-		if obj == nil || obj.IsDir() {
+		if obj == nil {
 			return nil
 		}
-		files = append(files, *obj)
+		if obj.IsDir() {
+			dirs = append(dirs, *obj)
+		} else {
+			files = append(files, *obj)
+		}
 	}
 	opt := m.objectListOptionFromState()
 	bucket := m.selectedBucket
 
+	// If any directories are selected, use the sync engine for recursive download.
+	// Resolve conn before entering the modal callback — the model may be stale by then.
+	if len(dirs) > 0 {
+		conn := m.syncConnParams()
+		title := fmt.Sprintf("Download %s to directory", transferCountPhrase(len(files), len(dirs)))
+		m.modal.Show(title, ".", func(localDir string) tea.Cmd {
+			syncs, skipped := remoteDirSyncs(dirs, bucket, localDir)
+			if len(files) == 0 && len(syncs) == 0 {
+				return errCmd(fmt.Errorf("download: %s", wildcardSkipNote(skipped)))
+			}
+			var cmds []tea.Cmd
+			if len(skipped) > 0 {
+				cmds = append(cmds, errCmd(fmt.Errorf("download: %s", wildcardSkipNote(skipped))))
+			}
+			if len(files) > 0 {
+				cmds = append(cmds, downloadCmds(opt, bucket, files, func(o objectlist.Object) string {
+					return filepath.Join(localDir, path.Base(o.Name()))
+				}))
+			}
+			cmds = append(cmds, dirSyncCmds(syncs, conn)...)
+			return tea.Batch(cmds...)
+		})
+		return nil
+	}
+
+	// Files-only path — unchanged behaviour.
 	if len(files) == 1 {
 		obj := files[0]
 		defaultPath := path.Base(obj.Name())
@@ -318,6 +352,55 @@ func (m *Model) promptUpload() tea.Cmd {
 		"./file.txt",
 		func(localPath string) tea.Cmd {
 			base := path.Base(localPath)
+
+			// Directory: one upload row per file, preserving sub-directory
+			// structure under the destination prefix. The walk is synchronous
+			// (just directory reads — no I/O) and mirrors how downloadCmds
+			// builds one row per object. Each file gets its own *Progress so
+			// the tick loop drives its bar independently.
+			if fi, statErr := os.Stat(localPath); statErr == nil && fi.IsDir() {
+				dirBase := path.Base(localPath)
+				keyPrefix := dirBase + "/"
+				if prefix != "" {
+					p := prefix
+					if !strings.HasSuffix(p, "/") {
+						p += "/"
+					}
+					keyPrefix = p + keyPrefix
+				}
+				var cmds []tea.Cmd
+				_ = filepath.Walk(localPath, func(filePath string, info os.FileInfo, err error) error {
+					if err != nil || info.IsDir() {
+						return err
+					}
+					rel, _ := filepath.Rel(localPath, filePath)
+					fileKey := keyPrefix + filepath.ToSlash(rel)
+					fid := transferpanel.NewID()
+					fprog := transferpanel.NewProgress()
+					fctx, fcancel := context.WithCancel(context.Background())
+					cmds = append(cmds, tea.Sequence(
+						addTransferCmd(transferpanel.Transfer{
+							ID:       fid,
+							Op:       transferpanel.OpUpload,
+							Label:    fmt.Sprintf("%s -> s3://%s/%s", filePath, bucket, fileKey),
+							Status:   transferpanel.StatusRunning,
+							Progress: fprog,
+							Cancel:   fcancel,
+						}),
+						objectlist.UploadToKeyCmd(fctx, opt, filePath, fileKey, fid, fprog),
+					))
+					return nil
+				})
+				if len(cmds) == 0 {
+					return nil
+				}
+				return tea.Batch(cmds...)
+			}
+
+			// Single file (or stat failed → UploadCmd surfaces the error).
+			id := transferpanel.NewID()
+			prog := transferpanel.NewProgress()
+			ctx, cancel := context.WithCancel(context.Background())
 			key := base
 			if prefix != "" {
 				p := prefix
@@ -326,12 +409,6 @@ func (m *Model) promptUpload() tea.Cmd {
 				}
 				key = p + base
 			}
-			id := transferpanel.NewID()
-			prog := transferpanel.NewProgress()
-			ctx, cancel := context.WithCancel(context.Background())
-			// Sequence (not Batch): the row must exist before the op can
-			// emit its TransferDoneMsg, or a fast-failing op leaves a
-			// permanently-running row.
 			return tea.Sequence(
 				addTransferCmd(transferpanel.Transfer{
 					ID:       id,
@@ -424,15 +501,17 @@ func (m *Model) promptDelete() tea.Cmd {
 			for _, prefix := range prefixes {
 				id := transferpanel.NewID()
 				ctx, cancel := context.WithCancel(context.Background())
+				prog := transferpanel.NewProgress()
 				cmds = append(cmds, tea.Sequence(
 					addTransferCmd(transferpanel.Transfer{
-						ID:     id,
-						Op:     transferpanel.OpDelete,
-						Label:  fmt.Sprintf("delete dir: s3://%s/%s", bucket, prefix),
-						Status: transferpanel.StatusRunning,
-						Cancel: cancel,
+						ID:       id,
+						Op:       transferpanel.OpDelete,
+						Label:    fmt.Sprintf("delete dir: s3://%s/%s", bucket, prefix),
+						Status:   transferpanel.StatusRunning,
+						Cancel:   cancel,
+						Progress: prog,
 					}),
-					objectlist.DeletePrefixCmd(ctx, opt, prefix, id),
+					objectlist.DeletePrefixCmd(ctx, opt, prefix, id, prog),
 				))
 			}
 			return tea.Batch(cmds...)

@@ -98,6 +98,10 @@ type TransferStats struct {
 	// and the per-direction batch counts render while either is > 0.
 	UpActive   int
 	DownActive int
+	OtherActive int  // running/queued ops that are not upload or download but have Progress set
+	// Byte progress for OtherActive ops (sync reports aggregate bytes via Progress.Report).
+	OtherDone  int64
+	OtherTotal int64
 	// Current-batch tallies: total counts every upload/download queued
 	// since the batch began (a batch starts when a transfer is added
 	// while none was active), done counts the completed ones. Failed and

@@ -33,11 +33,13 @@ package statusbar
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/LinPr/lazys3/internal/strutil"
 	"github.com/LinPr/lazys3/internal/tui/components/style"
 	"github.com/LinPr/lazys3/internal/tui/types"
 )
@@ -52,6 +54,7 @@ type Model struct {
 	stats         types.TransferStats
 	lastError     string
 	info          string
+	loading       bool
 	width         int
 	height        int
 }
@@ -99,6 +102,7 @@ func (m *Model) SetPrefix(p string)                     { m.prefix = p }
 func (m *Model) SetSelectedCount(n int)                 { m.selectedCount = n }
 func (m *Model) SetPane(p string)                       { m.pane = p }
 func (m *Model) SetTransferStats(s types.TransferStats) { m.stats = s }
+func (m *Model) SetLoading(v bool)                      { m.loading = v }
 
 // Profile / Bucket / Prefix / SelectedCount / Pane / LastError are read
 // accessors used by the TUI and by tests.
@@ -132,14 +136,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 // transferSegment renders the transfer block from the live stats snapshot.
 //
-// While any upload/download is active: "[███░░░░░] ↑1/2 ↓0/1" — an 8-cell
-// aggregate progress bar over the batch's rows with known byte totals
-// (indeterminate bounce when none is known), plus done/total batch counts
-// per direction (a direction with an empty batch is omitted). When
-// nothing is active: the lifetime completed totals "↑N ↓M" (never reset;
-// zero segments omitted). Failed/canceled rows append the ✗ tally in both
-// states. ASCII fallbacks ("[###-----] ^1/2 v0/1", "xF") when nerd_font
-// is off. Other op kinds (delete/mb/sync/...) only surface via ✗.
+// transferSegment renders the transfer activity chip. While any operation
+// is active, it shows per-type icons + counts and a unified progress bar.
+// Format: "↑2/5 ↓1/3 ✂3/10 [████░░░░]42%"
+// When nothing is active, it shows lifetime completed totals "↑N ↓M".
 func (m Model) transferSegment() string {
 	st := m.stats
 	up, down, fail := "↑", "↓", "✗"
@@ -150,14 +150,34 @@ func (m Model) transferSegment() string {
 	okStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#22c55e"))
 	failStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#ef4444"))
 	var parts []string
-	if st.UpActive+st.DownActive > 0 {
-		parts = append(parts, runStyle.Render("["+progressBar(st)+"]"))
+	if st.UpActive+st.DownActive+st.OtherActive > 0 {
+		// Per-type counts.
 		if st.UpTotal > 0 {
 			parts = append(parts, runStyle.Render(fmt.Sprintf("%s%d/%d", up, st.UpDone, st.UpTotal)))
+		} else if st.UpActive > 0 {
+			parts = append(parts, runStyle.Render(up))
 		}
 		if st.DownTotal > 0 {
 			parts = append(parts, runStyle.Render(fmt.Sprintf("%s%d/%d", down, st.DownDone, st.DownTotal)))
+		} else if st.DownActive > 0 {
+			parts = append(parts, runStyle.Render(down))
 		}
+		if st.OtherActive > 0 && st.OtherTotal > 0 {
+			parts = append(parts, runStyle.Render(fmt.Sprintf("%d/%d", st.OtherDone, st.OtherTotal)))
+		}
+		// OtherActive > 0 && OtherTotal == 0 (sync with unknown item count): emit nothing —
+		// aggregate bar already shows sync progress via BytesDone/BytesTotal.
+		// Byte totals before the unified bar.
+		if st.BytesTotal > 0 {
+			parts = append(parts, runStyle.Render(fmt.Sprintf("%s/%s", strutil.HumanizeBytes(st.BytesDone), strutil.HumanizeBytes(st.BytesTotal))))
+		}
+		// Unified bar + percentage.
+		barStr, pctKnown, pct := aggregateProgress(st)
+		bar := "[" + barStr + "]"
+		if pctKnown {
+			bar += fmt.Sprintf("%d%%", pct)
+		}
+		parts = append(parts, runStyle.Render(bar))
 	} else {
 		if st.LifetimeUp > 0 {
 			parts = append(parts, okStyle.Render(fmt.Sprintf("%s%d", up, st.LifetimeUp)))
@@ -172,17 +192,35 @@ func (m Model) transferSegment() string {
 	return strings.Join(parts, " ")
 }
 
-// progressBar renders the segment's 8-cell bar: a determinate fill from
-// the aggregate byte counters when any active total is known, otherwise a
-// 3-cell block bouncing with the panel's tick frame (never a bogus
-// percentage).
-func progressBar(st types.TransferStats) string {
+// aggregateProgress computes the unified bar and percentage across all active
+// operation types. Upload/download use byte counts; delete/sync use item
+// counts. Each type's fraction is normalised to [0,1] and averaged so a
+// mixed-op bar is always meaningful.
+func aggregateProgress(st types.TransferStats) (bar string, known bool, pct int) {
 	const width = 8
 	full, empty := "█", "░"
-	if !style.NerdFontEnabled() {
-		full, empty = "#", "-"
+
+	var fracSum float64
+	var fracCount int
+	if st.BytesTotal > 0 {
+		f := float64(st.BytesDone) / float64(st.BytesTotal)
+		if f > 1 {
+			f = 1
+		}
+		fracSum += f
+		fracCount++
 	}
-	if st.BytesTotal <= 0 {
+	if st.OtherTotal > 0 {
+		f := float64(st.OtherDone) / float64(st.OtherTotal)
+		if f > 1 {
+			f = 1
+		}
+		fracSum += f
+		fracCount++
+	}
+
+	if fracCount == 0 {
+		// Indeterminate bounce.
 		const block = 3
 		span := width - block
 		pos := st.Frame % (2 * span)
@@ -190,16 +228,13 @@ func progressBar(st types.TransferStats) string {
 			pos = 2*span - pos
 		}
 		return strings.Repeat(empty, pos) + strings.Repeat(full, block) +
-			strings.Repeat(empty, width-block-pos)
+			strings.Repeat(empty, width-block-pos), false, 0
 	}
-	pct := float64(st.BytesDone) / float64(st.BytesTotal)
-	if pct < 0 {
-		pct = 0
-	} else if pct > 1 {
-		pct = 1
-	}
-	filled := min(int(pct*float64(width)), width)
-	return strings.Repeat(full, filled) + strings.Repeat(empty, width-filled)
+
+	frac := fracSum / float64(fracCount)
+	filled := min(int(frac*float64(width)), width)
+	return strings.Repeat(full, filled) + strings.Repeat(empty, width-filled),
+		true, int(frac * 100)
 }
 
 // View renders the bar as a single styled line:
@@ -237,6 +272,12 @@ func (m Model) View() string {
 	}
 	if ts := m.transferSegment(); ts != "" {
 		segs = append(segs, ts)
+	}
+	if m.loading {
+		spinFrames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+		frame := int(time.Now().UnixMilli()/120) % len(spinFrames)
+		spinStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#a78bfa"))
+		segs = append(segs, spinStyle.Render(spinFrames[frame]))
 	}
 	left := strings.Join(segs, sep)
 	helpBlock := helpStyle.Render("? help")

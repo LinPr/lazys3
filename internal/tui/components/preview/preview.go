@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -33,9 +35,27 @@ import (
 // ever fetched, never the whole object.
 const MaxBytes = 256 * 1024
 
+// maxImageBytes is the size cap for image preview downloads.
+const maxImageBytes = 20 * 1024 * 1024 // 20 MB
+
 // fetchTimeout bounds a preview fetch so a hung endpoint cannot leave the
 // overlay loading forever.
 const fetchTimeout = 30 * time.Second
+
+// imageTimeout is longer for full image downloads.
+const imageTimeout = 2 * time.Minute
+
+// imageExts is the set of file extensions recognised as previewable images.
+var imageExts = map[string]bool{
+	".jpg": true, ".jpeg": true, ".png": true,
+	".gif": true, ".webp": true, ".bmp": true,
+	".tiff": true, ".tif": true,
+}
+
+// isImageKey reports whether a key's extension is a previewable image format.
+func isImageKey(key string) bool {
+	return imageExts[strings.ToLower(filepath.Ext(key))]
+}
 
 // PreviewRequest identifies a remote target plus the connection hints needed
 // to build a fresh S3 client for it. Objects and buckets are stamped with
@@ -63,12 +83,15 @@ type PreviewRequest struct {
 // ContentMsg carries a fetched content sample. Seq echoes the fetch
 // generation stamped by ShowRemote/ShowLocal; the Model drops messages from
 // superseded fetches (and everything that lands after Hide bumped the seq).
-// Total is the file's full size (-1 when unknown).
+// Total is the file's full size (-1 when unknown). Image is true when the
+// content came from an image file: Data holds chafa ANSI output when chafa
+// is available, nil Data (no Err) signals chafa is not installed.
 type ContentMsg struct {
 	Seq   int
 	Data  []byte
 	Total int64
 	Err   error
+	Image bool
 }
 
 // Model is the content overlay state.
@@ -83,6 +106,7 @@ type Model struct {
 
 	text   string // cleaned sample, valid-UTF-8 text only
 	binary bool
+	image  bool  // true: content is a chafa-rendered image (or "no chafa" notice)
 	shown  int   // sample bytes fetched
 	total  int64 // full size, -1 unknown
 
@@ -121,6 +145,7 @@ func (m *Model) Hide() {
 	m.title = ""
 	m.text = ""
 	m.binary = false
+	m.image = false
 	m.shown = 0
 	m.total = -1
 	m.lines = nil
@@ -135,6 +160,7 @@ func (m *Model) open(title string) {
 	m.title = title
 	m.text = ""
 	m.binary = false
+	m.image = false
 	m.shown = 0
 	m.total = -1
 	m.lines = nil
@@ -146,6 +172,9 @@ func (m *Model) open(title string) {
 // ShowRemote opens the overlay for an object and returns the Cmd that
 // fetches its first MaxBytes via a ranged GetObject.
 func (m *Model) ShowRemote(req *PreviewRequest) tea.Cmd {
+	if isImageKey(req.Key) {
+		return m.showRemoteImage(req)
+	}
 	m.open(fmt.Sprintf("s3://%s/%s", req.Bucket, req.Key))
 	seq := m.seq
 	if req.Size == 0 {
@@ -197,6 +226,9 @@ func (m *Model) ShowRemote(req *PreviewRequest) tea.Cmd {
 // ShowLocal opens the overlay for a local file and returns the Cmd that
 // reads its first MaxBytes off the Update goroutine.
 func (m *Model) ShowLocal(path string) tea.Cmd {
+	if isImageKey(path) {
+		return m.showLocalImage(path)
+	}
 	m.open(path)
 	seq := m.seq
 	return func() tea.Msg {
@@ -225,6 +257,111 @@ func (m *Model) ShowLocal(path string) tea.Cmd {
 		}
 		return ContentMsg{Seq: seq, Data: data, Total: total}
 	}
+}
+
+// showRemoteImage opens a full-download image preview for a remote S3 object.
+func (m *Model) showRemoteImage(req *PreviewRequest) tea.Cmd {
+	m.open(fmt.Sprintf("s3://%s/%s", req.Bucket, req.Key))
+	seq := m.seq
+	chafa, err := exec.LookPath("chafa")
+	if err != nil {
+		return func() tea.Msg { return ContentMsg{Seq: seq, Image: true} }
+	}
+	if req.Size > maxImageBytes {
+		return func() tea.Msg {
+			return ContentMsg{Seq: seq, Err: fmt.Errorf("image too large to preview (%s)", strutil.HumanizeBytes(req.Size))}
+		}
+	}
+	r := *req
+	w, h := m.boxSize()
+	imgW := w - boxStyle.GetHorizontalFrameSize()
+	imgH := h - boxStyle.GetVerticalFrameSize() - 2
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), imageTimeout)
+		defer cancel()
+		cli, err := s3store.NewS3Client(ctx, s3store.S3Option{
+			Profile:        r.Profile,
+			Endpoint:       r.EndpointURL,
+			UsePathStyle:   r.PathStyle,
+			Region:         r.Region,
+			ConfigFile:     r.ConfigFile,
+			CredentialFile: r.CredentialFile,
+		})
+		if err != nil {
+			return ContentMsg{Seq: seq, Err: err}
+		}
+		out, err := cli.Client().GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String(r.Bucket),
+			Key:    aws.String(r.Key),
+		})
+		if err != nil {
+			return ContentMsg{Seq: seq, Err: err}
+		}
+		defer out.Body.Close() //nolint:errcheck
+		tmpf, err := os.CreateTemp("", "lazys3-img-*"+filepath.Ext(r.Key))
+		if err != nil {
+			return ContentMsg{Seq: seq, Err: err}
+		}
+		defer os.Remove(tmpf.Name()) //nolint:errcheck
+		if _, err = io.Copy(tmpf, out.Body); err != nil {
+			tmpf.Close()
+			return ContentMsg{Seq: seq, Err: err}
+		}
+		tmpf.Close()
+		data, err := runChafa(ctx, chafa, tmpf.Name(), imgW, imgH)
+		if err != nil {
+			return ContentMsg{Seq: seq, Err: err}
+		}
+		return ContentMsg{Seq: seq, Image: true, Data: data, Total: r.Size}
+	}
+}
+
+// showLocalImage opens a chafa image preview for a local file.
+func (m *Model) showLocalImage(path string) tea.Cmd {
+	m.open(path)
+	seq := m.seq
+	chafa, err := exec.LookPath("chafa")
+	if err != nil {
+		return func() tea.Msg { return ContentMsg{Seq: seq, Image: true} }
+	}
+	w, h := m.boxSize()
+	imgW := w - boxStyle.GetHorizontalFrameSize()
+	imgH := h - boxStyle.GetVerticalFrameSize() - 2
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), imageTimeout)
+		defer cancel()
+		st, err := os.Stat(path)
+		if err != nil {
+			return ContentMsg{Seq: seq, Err: err}
+		}
+		if st.Size() > maxImageBytes {
+			return ContentMsg{Seq: seq, Err: fmt.Errorf("image too large to preview (%s)", strutil.HumanizeBytes(st.Size()))}
+		}
+		data, err := runChafa(ctx, chafa, path, imgW, imgH)
+		if err != nil {
+			return ContentMsg{Seq: seq, Err: err}
+		}
+		return ContentMsg{Seq: seq, Image: true, Data: data, Total: st.Size()}
+	}
+}
+
+// runChafa executes chafa and returns its ANSI output.
+func runChafa(ctx context.Context, chafaPath, imgPath string, w, h int) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, chafaPath,
+		"-f", "symbols",  // Unicode block chars, works in any terminal
+		"-c", "full",     // 24-bit true color
+		"--font-ratio", "1/2", // typical monospace cell aspect ratio
+		"--size", fmt.Sprintf("%dx%d", w, h),
+		imgPath,
+	)
+	out, err := cmd.Output()
+	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok && len(ee.Stderr) > 0 {
+			return nil, fmt.Errorf("chafa: %s", strings.TrimSpace(string(ee.Stderr)))
+		}
+		return nil, fmt.Errorf("chafa: %w", err)
+	}
+	return out, nil
 }
 
 // totalFromContentRange parses the total size off a Content-Range header
@@ -256,6 +393,16 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	}
 	m.shown = len(cm.Data)
 	m.total = cm.Total
+	if cm.Image {
+		m.image = true
+		if cm.Data != nil {
+			// chafa ANSI output: store lines directly, skip cleanText
+			m.lines = strings.Split(strings.TrimRight(string(cm.Data), "\n"), "\n")
+			m.wrapW = m.innerWidth()
+		}
+		// nil Data with no Err = chafa not installed; View handles the notice
+		return m, nil
+	}
 	data := cm.Data
 	if m.total > int64(len(data)) {
 		// The sample was cut at a byte boundary: a multi-byte rune split at
@@ -335,10 +482,10 @@ var (
 			Foreground(lipgloss.Color("#aaaaaa"))
 )
 
-// boxSize is the overlay's outer box: width min(100, W-6), height H-4,
+// boxSize is the overlay's outer box: width 4/5 of terminal width, height H-4,
 // with floors so a tiny terminal still renders something sane.
 func (m Model) boxSize() (w, h int) {
-	w = min(100, m.width-6)
+	w = m.width * 4 / 5
 	if w < 20 {
 		w = 20
 	}
@@ -395,8 +542,11 @@ func (m Model) truncated() bool {
 // keys are swallowed by design — the TUI forwards nothing else while the
 // overlay is visible.
 func (m *Model) HandleKey(key string) {
-	if m.loading || m.err != nil || m.binary {
+	if m.loading || m.err != nil || (m.binary && !m.image) {
 		return
+	}
+	if m.image && m.lines == nil {
+		return // no chafa: nothing to scroll
 	}
 	total := len(m.contentLines())
 	page := m.pageSize()
@@ -447,6 +597,20 @@ func (m Model) View() string {
 	case m.err != nil:
 		lines = append(lines, strings.Split(
 			ansi.Hardwrap("preview failed: "+m.err.Error(), inner, true), "\n")...)
+	case m.image && m.lines == nil:
+		lines = append(lines, m.centered("install chafa to preview image files (jpg/png/gif/webp/…)"))
+	case m.image:
+		content := m.contentLines()
+		offset := m.offset
+		if max := len(content) - page; offset > max {
+			offset = max
+		}
+		if offset < 0 {
+			offset = 0
+		}
+		end := min(offset+page, len(content))
+		lines = append(lines, content[offset:end]...)
+		footer = fmt.Sprintf("%s · j/k scroll · p/esc close", strutil.HumanizeBytes(m.total))
 	case m.binary:
 		size := m.total
 		if size < 0 {

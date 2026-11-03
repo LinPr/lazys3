@@ -4,8 +4,6 @@ on:
   push:
     tags:
       - 'v*'
-    branches:
-      - master
 
 jobs:
   release:
@@ -13,67 +11,103 @@ jobs:
       contents: write
 
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
-    
+
+    # CGO_ENABLED=0 is the important one: it makes every binary statically
+    # linked. The previous per-command "CGO_ENABLE=0" was a typo, so CGO
+    # stayed enabled and the linux binaries were dynamically linked against
+    # ubuntu-latest's glibc -- they then failed on older distributions with
+    # "version `GLIBC_2.34' not found". Setting it once at job level means a
+    # new build step cannot silently forget it.
+    env:
+      CGO_ENABLED: '0'
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux, goarch: amd64, asset: lazys3-linux-amd64 }
+          - { goos: linux, goarch: arm64, asset: lazys3-linux-arm64 }
+          - { goos: darwin, goarch: amd64, asset: lazys3-darwin-amd64 }
+          - { goos: darwin, goarch: arm64, asset: lazys3-darwin-arm64 }
+          - { goos: windows, goarch: amd64, asset: lazys3-windows-amd64.exe }
+          - { goos: windows, goarch: arm64, asset: lazys3-windows-arm64.exe }
+
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v5
-      with:
-        fetch-depth: 0
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
-    - name: Set up Go
-      uses: actions/setup-go@v6
-      with:
-        go-version: '1.25.0'
-    - run: go version
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.25.0'
 
-    - name: Get version
-      id: get_version
-      run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+      - name: Show toolchain
+        run: go version
 
-    - name: Build for Linux AMD64
-      run: |
-        GOOS=linux GOARCH=amd64 CGO_ENABLE=0 go build -ldflags "-s -w -X github.com/LinPr/lazys3/cmd.Version=${{ steps.get_version.outputs.VERSION }}" -o lazys3-linux-amd64 .
+      - name: Test
+        run: go test $(go list ./... | grep -v /e2e)
 
-    - name: Build for Linux ARM64
-      run: |
-        GOOS=linux GOARCH=arm64 CGO_ENABLE=0 go build -ldflags "-s -w -X github.com/LinPr/lazys3/cmd.Version=${{ steps.get_version.outputs.VERSION }}" -o lazys3-linux-arm64 .
+      - name: Build ${{ matrix.asset }}
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/}"
+          go build \
+            -ldflags "-s -w -X github.com/LinPr/lazys3/cmd.Version=${VERSION}" \
+            -o "${{ matrix.asset }}" .
+          # Fail the build loudly if the binary is not static: that is the
+          # regression this job exists to prevent.
+          if [ "${{ matrix.goos }}" = "linux" ]; then
+            file "${{ matrix.asset }}"
+            file "${{ matrix.asset }}" | grep -q 'statically linked' || \
+              { echo "::error::${{ matrix.asset }} is not statically linked"; exit 1; }
+          fi
 
-    - name: Build for Windows AMD64
-      run: |
-        GOOS=windows GOARCH=amd64 CGO_ENABLE=0 go build -ldflags "-s -w -X github.com/LinPr/lazys3/cmd.Version=${{ steps.get_version.outputs.VERSION }}" -o lazys3-windows-amd64.exe .
+      - name: Upload ${{ matrix.asset }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+          if-no-files-found: error
 
-    - name: Build for Windows ARM64
-      run: |
-        GOOS=windows GOARCH=arm64 CGO_ENABLE=0 go build -ldflags "-s -w -X github.com/LinPr/lazys3/cmd.Version=${{ steps.get_version.outputs.VERSION }}" -o lazys3-windows-arm64.exe .
+  publish:
+    needs: release
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
 
-    - name: Build for macOS AMD64
-      run: |
-        GOOS=darwin GOARCH=amd64 CGO_ENABLE=0 go build -ldflags "-s -w -X github.com/LinPr/lazys3/cmd.Version=${{ steps.get_version.outputs.VERSION }}" -o lazys3-darwin-amd64 .
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
 
-    - name: Build for macOS ARM64
-      run: |
-        GOOS=darwin GOARCH=arm64 CGO_ENABLE=0 go build -ldflags "-s -w -X github.com/LinPr/lazys3/cmd.Version=${{ steps.get_version.outputs.VERSION }}" -o lazys3-darwin-arm64 .
+      - name: Create checksums
+        working-directory: dist
+        run: |
+          ls -l
+          sha256sum lazys3-* > checksums.txt
+          cat checksums.txt
 
-    - name: Create checksums
-      run: |
-        sha256sum lazys3-* > checksums.txt
-
-    - name: Create Release
-      uses: softprops/action-gh-release@v1
-      with:
-        tag_name: ${{ steps.get_version.outputs.VERSION }}
-        name: Release ${{ steps.get_version.outputs.VERSION }}
-        draft: false
-        prerelease: false
-        generate_release_notes: true
-        files: |
-          lazys3-linux-amd64
-          lazys3-linux-arm64
-          lazys3-windows-amd64.exe
-          lazys3-windows-arm64.exe
-          lazys3-darwin-amd64
-          lazys3-darwin-arm64
-          checksums.txt
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            dist/lazys3-linux-amd64
+            dist/lazys3-linux-arm64
+            dist/lazys3-windows-amd64.exe
+            dist/lazys3-windows-arm64.exe
+            dist/lazys3-darwin-amd64
+            dist/lazys3-darwin-arm64
+            dist/checksums.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

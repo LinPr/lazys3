@@ -58,6 +58,13 @@ type Local struct {
 type Profile struct {
 	Bucket string `yaml:"bucket"`
 	Prefix string `yaml:"prefix"`
+	// Endpoint and Region override the shared config's endpoint_url and
+	// region for this profile. They exist so a profile can be pointed at
+	// an internal/self-hosted endpoint, or at a different region, without
+	// editing ~/.aws/config (which other tools share). Empty keeps the
+	// shared-config value.
+	Endpoint string `yaml:"endpoint"`
+	Region   string `yaml:"region"`
 }
 
 // Config is the root of the config file schema.
@@ -226,7 +233,22 @@ func (c *Config) sanitize() {
 	for name, p := range c.Profiles {
 		p.Bucket = normalizeBucket(p.Bucket)
 		p.Prefix = normalizeKeyPrefix(p.Prefix)
-		if p.Bucket == "" || strings.ContainsAny(p.Bucket, "/ \t") {
+		p.Endpoint = strings.TrimSpace(p.Endpoint)
+		p.Region = strings.TrimSpace(p.Region)
+		if p.Endpoint != "" && !strings.Contains(p.Endpoint, "://") {
+			// Accept a bare host ("oss-cn-hangzhou.aliyuncs.com"); the SDK
+			// needs a scheme to tell it apart from a path.
+			p.Endpoint = "https://" + p.Endpoint
+		}
+		if p.Bucket == "" {
+			// No start location, but the entry may still carry an
+			// endpoint/region override, which is legitimate on its own.
+			if p.Endpoint == "" && p.Region == "" {
+				log.Printf("config: [profiles.%s] has neither bucket nor endpoint/region, entry ignored", name)
+				delete(c.Profiles, name)
+				continue
+			}
+		} else if strings.ContainsAny(p.Bucket, "/ \t") {
 			log.Printf("config: [profiles.%s] invalid bucket %q, entry ignored", name, p.Bucket)
 			delete(c.Profiles, name)
 			continue
@@ -294,6 +316,8 @@ profiles:
   # oss:
   #   bucket: "my-bucket"
   #   prefix: "some/prefix/"
+  #   endpoint: "https://s3.internal.example.com"  # optional: override endpoint_url
+  #   region: "cn-hangzhou"                        # optional: override region
 `
 
 // writeDefault writes the commented template, creating parent directories.

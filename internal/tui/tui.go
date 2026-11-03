@@ -288,8 +288,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// pruning can shrink the rows between keys, and 'x' must
 				// cancel the row the user SEES highlighted, not no-op.
 				if c := min(m.transferView.Cursor(), len(rows)-1); c >= 0 {
-					if m.transferPanel.CancelByID(rows[c].ID) {
+					if cleanup, ok := m.transferPanel.CancelByID(rows[c].ID); ok {
 						log.Println("cancelled transfer:", rows[c].ID)
+						cmds = append(cmds, m.abortCancelledUpload(cleanup))
 					}
 				}
 			default:
@@ -310,8 +311,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if key == keybinding.VersionsToggle || msg.String() == "esc" {
 				m.versionView.Hide()
 			} else if key == keybinding.TransferCancel {
-				if id, ok := m.transferPanel.CancelLatest(); ok {
+				if id, cleanup, ok := m.transferPanel.CancelLatest(); ok {
 					log.Println("cancelled transfer:", id)
+					cmds = append(cmds, m.abortCancelledUpload(cleanup))
 				}
 			} else if cmd := m.versionView.HandleKey(key); cmd != nil {
 				cmds = append(cmds, cmd)
@@ -453,10 +455,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// cancelled; the op returns context.Canceled and the row renders
 			// as "canceled").
 			case keybinding.TransferCancel:
-				if id, ok := m.transferPanel.CancelLatest(); ok {
+				if id, cleanup, ok := m.transferPanel.CancelLatest(); ok {
 					log.Println("cancelled transfer:", id)
+					cmds = append(cmds, m.abortCancelledUpload(cleanup))
 				}
-				return m, m.emitStatusUpdate()
+				cmds = append(cmds, m.emitStatusUpdate())
+				return m, tea.Batch(cmds...)
 
 			// ? toggles the help overlay. Handled here (rather than in the
 			// help.IsVisible branch above) so the first '?' press opens it.
@@ -517,7 +521,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// logic stays in one place). Only ActiveObjectList /
 			// ActiveBucketList react to these; the handler returns nil for
 			// other states.
-			case "d", "u", "D", "r", "c", "B", "s", keybinding.YankURI, keybinding.Presign:
+			case "d", "u", "D", "r", "c", "B", "s", keybinding.YankURI, keybinding.Presign,
+				keybinding.PresignUpload, keybinding.MultipartCleanup, keybinding.Search:
 				// In dual mode, 'c' copies across panes and 's' prefills the
 				// sync flow with both pane locations; local focus turns the
 				// remaining remote-only keys into a status-bar hint.
@@ -532,7 +537,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Batch(cmds...)
 
 			default:
-				log.Println("key string:", msg.String())
 			}
 		}
 	}
@@ -710,6 +714,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd := m.handleGotoLocal(tmsg.path); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+	case searchResultsMsg:
+		if cmd := m.handleSearchResults(tmsg); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case multipartListMsg:
+		if cmd := m.handleMultipartList(tmsg); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case objectlist.PresignDoneMsg:
 		// Presign is instant (no transfer row): failures land on the
 		// status bar; a success shows the URL in a confirm modal (the
@@ -732,19 +744,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// The floating p/m overlays count too: a modal popping over the text
 		// the user is reading would steal its keys mid-scroll.
 		if m.overlayActive() {
-			note := fmt.Sprintf("presigned URL for %s copied to clipboard (valid %s)", path.Base(tmsg.Key), tmsg.Expiry)
+			note := fmt.Sprintf("presigned %s URL for %s copied to clipboard (valid %s)", presignMethodLabel(tmsg.Method), path.Base(tmsg.Key), tmsg.Expiry)
 			if insecure {
 				note += " — plain HTTP"
 			}
 			m.statusBar.SetInfo(note)
 			break
 		}
-		body := fmt.Sprintf("s3://%s/%s\nvalid for %s — copied to clipboard\n\n%s",
-			tmsg.Bucket, tmsg.Key, tmsg.Expiry, tmsg.URL)
+		body := fmt.Sprintf("s3://%s/%s\n%s URL, valid for %s — copied to clipboard\n\n%s",
+			tmsg.Bucket, tmsg.Key, presignMethodLabel(tmsg.Method), tmsg.Expiry, tmsg.URL)
+		if tmsg.Method == "PUT" {
+			body += "\n\nAnyone with this link can upload to that key until it expires (PUT request, no credentials)."
+		}
 		if insecure {
 			body += "\n\nwarning: plain-HTTP endpoint — anyone fetching this link sends the URL (a bearer credential) and receives the object unencrypted"
 		}
-		m.modal.ShowInfo("Presigned URL", body)
+		title := "Presigned URL"
+		if tmsg.Method == "PUT" {
+			title = "Presigned upload URL"
+		}
+		m.modal.ShowInfo(title, body)
 	}
 
 	// Forward errors and status updates to the status bar. ErrMsg arrives
@@ -807,7 +826,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, cmd)
 
 	default:
-		log.Println("Unknown state:", m.state)
 	}
 
 	// Emit a StatusUpdateMsg reflecting the post-dispatch state so the
@@ -1013,4 +1031,13 @@ func placeCentered(layout, box string, w, h int) string {
 	x := (w - lipgloss.Width(box)) / 2
 	y := (h - lipgloss.Height(box)) / 2
 	return style.PlaceOverlay(layout, box, x, y)
+}
+
+// presignMethodLabel names the HTTP method a presigned URL allows, for the
+// status bar and the result modal. An empty Method is a legacy GET.
+func presignMethodLabel(method string) string {
+	if method == "" || method == "GET" {
+		return "download"
+	}
+	return "upload"
 }

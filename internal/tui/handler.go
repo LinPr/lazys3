@@ -1,24 +1,12 @@
 package tui
 
 import (
-	"context"
 	"fmt"
-	"log"
-	"os"
-	"path"
-	"path/filepath"
 	"strings"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/LinPr/lazys3/internal/storage"
-	fsstore "github.com/LinPr/lazys3/internal/storage/fs"
-	s3store "github.com/LinPr/lazys3/internal/storage/s3"
 	"github.com/LinPr/lazys3/internal/tui/components/bucketlist"
 	"github.com/LinPr/lazys3/internal/tui/components/objectlist"
-	"github.com/LinPr/lazys3/internal/tui/components/syncmodal"
-	"github.com/LinPr/lazys3/internal/tui/components/transferpanel"
-	"github.com/LinPr/lazys3/internal/tui/components/versionview"
 	"github.com/LinPr/lazys3/internal/tui/keybinding"
 	"github.com/LinPr/lazys3/internal/tui/state"
 	"github.com/LinPr/lazys3/internal/tui/types"
@@ -86,9 +74,14 @@ func (m *Model) objectListOption(s3uri string) objectlist.Option {
 	}
 }
 
-// selectedEndpoint returns the highlighted profile's custom endpoint_url
-// ("" for AWS S3).
+// selectedEndpoint returns the active profile's custom endpoint_url.
+// A [profiles.<name>.endpoint] override wins over the shared config, so a
+// profile can be pointed at an internal endpoint without touching
+// ~/.aws/config.
 func (m *Model) selectedEndpoint() string {
+	if p, ok := m.profileStarts[m.selectedProfile]; ok && p.Endpoint != "" {
+		return p.Endpoint
+	}
 	if p := m.profileList.GetSelectedProfile(); p != nil {
 		return p.EndpointURL
 	}
@@ -163,6 +156,12 @@ func (m *Model) handleFileOp(key string) tea.Cmd {
 			return m.yankRemoteURI()
 		case keybinding.Presign:
 			return m.promptPresign()
+		case keybinding.PresignUpload:
+			return m.promptPresignUpload()
+		case keybinding.MultipartCleanup:
+			return m.promptMultipartCleanup()
+		case keybinding.Search:
+			return m.promptSearch()
 		}
 	}
 	return nil
@@ -192,952 +191,6 @@ func (m *Model) yankRemoteURI() tea.Cmd {
 	}
 	m.statusBar.SetInfo("uri copied: " + uri)
 	return tea.SetClipboard(uri)
-}
-
-// promptPresign opens a modal asking for the presigned-URL expiry, then
-// generates a shareable GET URL for the highlighted object. Directories
-// have no object to sign, so they surface a status-bar error instead. The
-// result arrives as objectlist.PresignDoneMsg (handled in tui.go), which
-// shows the URL in a confirm modal and copies it to the clipboard.
-func (m *Model) promptPresign() tea.Cmd {
-	obj := m.objectlist.GetSelectedObject()
-	if obj == nil {
-		return nil
-	}
-	if obj.IsDir() {
-		return func() tea.Msg {
-			return types.ErrMsg{Err: fmt.Errorf("presign: directories are not supported; select an object file")}
-		}
-	}
-	key := obj.Name()
-	opt := m.objectListOptionFromState()
-	m.modal.Show(
-		fmt.Sprintf("Presign URL expiry for %s (1s..168h)", path.Base(key)),
-		"1h",
-		func(expiryStr string) tea.Cmd {
-			return objectlist.PresignCmd(opt, key, expiryStr)
-		},
-	)
-	return nil
-}
-
-// addTransferCmd returns a tea.Cmd that queues a transfer row via
-// TransferAddMsg. Modal onConfirm callbacks run against a stale copy of
-// the model (the closure captures the Update pass that opened the modal),
-// so rows must be created message-style on the live model — never by
-// mutating the captured m. It also means a cancelled modal (esc) creates
-// no row at all.
-func addTransferCmd(t transferpanel.Transfer) tea.Cmd {
-	return func() tea.Msg {
-		return transferpanel.TransferAddMsg{Transfer: t}
-	}
-}
-
-// downloadCmds builds one transfer row + DownloadCmd pair per object. Each
-// transfer owns a cancellable context (stored on the row for the 'x' key)
-// and a shared Progress counter the panel's tick loop renders.
-func downloadCmds(opt objectlist.Option, bucket string, objs []objectlist.Object, dest func(objectlist.Object) string) tea.Cmd {
-	cmds := make([]tea.Cmd, 0, len(objs))
-	for _, obj := range objs {
-		id := transferpanel.NewID()
-		dst := dest(obj)
-		prog := transferpanel.NewProgress()
-		ctx, cancel := context.WithCancel(context.Background())
-		// Sequence each add+op pair so the row exists before the op can
-		// emit its TransferDoneMsg (a fast-failing op would otherwise
-		// leave a permanently-running row).
-		cmds = append(cmds, tea.Sequence(
-			addTransferCmd(transferpanel.Transfer{
-				ID:       id,
-				Op:       transferpanel.OpDownload,
-				Label:    fmt.Sprintf("s3://%s/%s -> %s", bucket, obj.Name(), dst),
-				Status:   transferpanel.StatusRunning,
-				Progress: prog,
-				Cancel:   cancel,
-			}),
-			objectlist.DownloadCmd(ctx, opt, obj.Name(), dst, id, prog),
-		))
-	}
-	return tea.Batch(cmds...)
-}
-
-// promptDownload opens a modal for downloading the current selection. A
-// single file prompts for a destination path; a multi-selection prompts
-// for a destination directory and spawns one transfer row per object.
-// Directory prefixes are downloaded recursively via the sync engine.
-func (m *Model) promptDownload() tea.Cmd {
-	var files, dirs []objectlist.Object
-	for _, o := range m.objectlist.SelectedObjects() {
-		if o.IsDir() {
-			dirs = append(dirs, o)
-		} else {
-			files = append(files, o)
-		}
-	}
-	if len(files) == 0 && len(dirs) == 0 {
-		obj := m.objectlist.GetSelectedObject()
-		if obj == nil {
-			return nil
-		}
-		if obj.IsDir() {
-			dirs = append(dirs, *obj)
-		} else {
-			files = append(files, *obj)
-		}
-	}
-	opt := m.objectListOptionFromState()
-	bucket := m.selectedBucket
-
-	// If any directories are selected, use the sync engine for recursive download.
-	// Resolve conn before entering the modal callback — the model may be stale by then.
-	if len(dirs) > 0 {
-		conn := m.syncConnParams()
-		title := fmt.Sprintf("Download %s to directory", transferCountPhrase(len(files), len(dirs)))
-		m.modal.Show(title, ".", func(localDir string) tea.Cmd {
-			syncs, skipped := remoteDirSyncs(dirs, bucket, localDir)
-			if len(files) == 0 && len(syncs) == 0 {
-				return errCmd(fmt.Errorf("download: %s", wildcardSkipNote(skipped)))
-			}
-			var cmds []tea.Cmd
-			if len(skipped) > 0 {
-				cmds = append(cmds, errCmd(fmt.Errorf("download: %s", wildcardSkipNote(skipped))))
-			}
-			if len(files) > 0 {
-				cmds = append(cmds, downloadCmds(opt, bucket, files, func(o objectlist.Object) string {
-					return filepath.Join(localDir, path.Base(o.Name()))
-				}))
-			}
-			cmds = append(cmds, dirSyncCmds(syncs, conn)...)
-			return tea.Batch(cmds...)
-		})
-		return nil
-	}
-
-	// Files-only path — unchanged behaviour.
-	if len(files) == 1 {
-		obj := files[0]
-		defaultPath := path.Base(obj.Name())
-		if defaultPath == "" || defaultPath == "." {
-			defaultPath = "./download"
-		}
-		m.modal.Show(
-			"Download to",
-			defaultPath,
-			func(localPath string) tea.Cmd {
-				return downloadCmds(opt, bucket, []objectlist.Object{obj},
-					func(objectlist.Object) string { return localPath })
-			},
-		)
-		return nil
-	}
-
-	m.modal.Show(
-		fmt.Sprintf("Download %d objects to directory", len(files)),
-		".",
-		func(dir string) tea.Cmd {
-			return downloadCmds(opt, bucket, files, func(o objectlist.Object) string {
-				return filepath.Join(dir, path.Base(o.Name()))
-			})
-		},
-	)
-	return nil
-}
-
-// promptUpload opens a modal asking for a local file path. The destination
-// key is currentPrefix + basename. On confirm, queue + start UploadCmd.
-func (m *Model) promptUpload() tea.Cmd {
-	opt := m.objectListOptionFromState()
-	bucket := m.selectedBucket
-	prefix := strings.TrimPrefix(m.selectedObject, "/")
-	m.modal.Show(
-		"Upload from",
-		"./file.txt",
-		func(localPath string) tea.Cmd {
-			base := path.Base(localPath)
-
-			// Directory: one upload row per file, preserving sub-directory
-			// structure under the destination prefix. The walk is synchronous
-			// (just directory reads — no I/O) and mirrors how downloadCmds
-			// builds one row per object. Each file gets its own *Progress so
-			// the tick loop drives its bar independently.
-			if fi, statErr := os.Stat(localPath); statErr == nil && fi.IsDir() {
-				dirBase := path.Base(localPath)
-				keyPrefix := dirBase + "/"
-				if prefix != "" {
-					p := prefix
-					if !strings.HasSuffix(p, "/") {
-						p += "/"
-					}
-					keyPrefix = p + keyPrefix
-				}
-				var cmds []tea.Cmd
-				_ = filepath.Walk(localPath, func(filePath string, info os.FileInfo, err error) error {
-					if err != nil || info.IsDir() {
-						return err
-					}
-					rel, _ := filepath.Rel(localPath, filePath)
-					fileKey := keyPrefix + filepath.ToSlash(rel)
-					fid := transferpanel.NewID()
-					fprog := transferpanel.NewProgress()
-					fctx, fcancel := context.WithCancel(context.Background())
-					cmds = append(cmds, tea.Sequence(
-						addTransferCmd(transferpanel.Transfer{
-							ID:       fid,
-							Op:       transferpanel.OpUpload,
-							Label:    fmt.Sprintf("%s -> s3://%s/%s", filePath, bucket, fileKey),
-							Status:   transferpanel.StatusRunning,
-							Progress: fprog,
-							Cancel:   fcancel,
-						}),
-						objectlist.UploadToKeyCmd(fctx, opt, filePath, fileKey, fid, fprog),
-					))
-					return nil
-				})
-				if len(cmds) == 0 {
-					return nil
-				}
-				return tea.Batch(cmds...)
-			}
-
-			// Single file (or stat failed → UploadCmd surfaces the error).
-			id := transferpanel.NewID()
-			prog := transferpanel.NewProgress()
-			ctx, cancel := context.WithCancel(context.Background())
-			key := base
-			if prefix != "" {
-				p := prefix
-				if !strings.HasSuffix(p, "/") {
-					p += "/"
-				}
-				key = p + base
-			}
-			return tea.Sequence(
-				addTransferCmd(transferpanel.Transfer{
-					ID:       id,
-					Op:       transferpanel.OpUpload,
-					Label:    fmt.Sprintf("%s -> s3://%s/%s", localPath, bucket, key),
-					Status:   transferpanel.StatusRunning,
-					Progress: prog,
-					Cancel:   cancel,
-				}),
-				objectlist.UploadCmd(ctx, opt, localPath, id, prog),
-			)
-		},
-	)
-	return nil
-}
-
-// promptDelete opens a confirm modal for deleting the selected object(s):
-// the multi-selection in display order, or the single highlighted item.
-// Files go through the existing bulk DeleteCmd; each directory entry
-// (common prefix) becomes its own transfer row that recursively lists and
-// deletes every key under the prefix (objectlist.DeletePrefixCmd). The
-// confirm body calls out the recursive folder deletes by name so the
-// modal never hides that whole trees are going away.
-func (m *Model) promptDelete() tea.Cmd {
-	var files, dirs []objectlist.Object
-	for _, o := range m.objectlist.SelectedObjects() {
-		if o.IsDir() {
-			dirs = append(dirs, o)
-		} else {
-			files = append(files, o)
-		}
-	}
-	if len(files) == 0 && len(dirs) == 0 {
-		obj := m.objectlist.GetSelectedObject()
-		if obj == nil {
-			return nil
-		}
-		if obj.IsDir() {
-			dirs = append(dirs, *obj)
-		} else {
-			files = append(files, *obj)
-		}
-	}
-	if len(files) == 0 && len(dirs) == 0 {
-		return nil
-	}
-	keys := make([]string, 0, len(files))
-	for _, o := range files {
-		keys = append(keys, o.Name())
-	}
-	prefixes := make([]string, 0, len(dirs))
-	for _, o := range dirs {
-		prefixes = append(prefixes, o.Name())
-	}
-	opt := m.objectListOptionFromState()
-	bucket := m.selectedBucket
-	var body string
-	switch {
-	case len(prefixes) == 0:
-		body = fmt.Sprintf("Delete %d object(s) from %s?", len(keys), bucket)
-	case len(keys) == 0:
-		body = fmt.Sprintf("Recursively delete %d folder(s) from %s? (permanent)%s",
-			len(prefixes), bucket, folderList(prefixes))
-	default:
-		body = fmt.Sprintf("Delete %d object(s) and recursively delete %d folder(s) from %s? (permanent)%s",
-			len(keys), len(prefixes), bucket, folderList(prefixes))
-	}
-	m.modal.ShowConfirm(
-		"Delete objects",
-		body,
-		func() tea.Cmd {
-			cmds := make([]tea.Cmd, 0, len(prefixes)+1)
-			if len(keys) > 0 {
-				id := transferpanel.NewID()
-				ctx, cancel := context.WithCancel(context.Background())
-				// Sequence (not Batch): the row must exist before the op
-				// can emit its TransferDoneMsg, or a fast-failing op leaves
-				// a permanently-running row.
-				cmds = append(cmds, tea.Sequence(
-					addTransferCmd(transferpanel.Transfer{
-						ID:     id,
-						Op:     transferpanel.OpDelete,
-						Label:  fmt.Sprintf("delete %d object(s) from s3://%s", len(keys), bucket),
-						Status: transferpanel.StatusRunning,
-						Cancel: cancel,
-					}),
-					objectlist.DeleteCmd(ctx, opt, keys, id),
-				))
-			}
-			for _, prefix := range prefixes {
-				id := transferpanel.NewID()
-				ctx, cancel := context.WithCancel(context.Background())
-				prog := transferpanel.NewProgress()
-				cmds = append(cmds, tea.Sequence(
-					addTransferCmd(transferpanel.Transfer{
-						ID:       id,
-						Op:       transferpanel.OpDelete,
-						Label:    fmt.Sprintf("delete dir: s3://%s/%s", bucket, prefix),
-						Status:   transferpanel.StatusRunning,
-						Cancel:   cancel,
-						Progress: prog,
-					}),
-					objectlist.DeletePrefixCmd(ctx, opt, prefix, id, prog),
-				))
-			}
-			return tea.Batch(cmds...)
-		},
-	)
-	return nil
-}
-
-// folderList renders up to three folder names (one per line) for the
-// delete confirm body, then "+K more" for the rest.
-func folderList(prefixes []string) string {
-	shown := prefixes
-	extra := 0
-	if len(shown) > 3 {
-		extra = len(shown) - 3
-		shown = shown[:3]
-	}
-	s := "\n" + strings.Join(shown, "\n")
-	if extra > 0 {
-		s += fmt.Sprintf("\n+%d more", extra)
-	}
-	return s
-}
-
-// promptRename opens a modal asking for the new destination s3:// URI.
-// Rename is copy+delete.
-func (m *Model) promptRename() tea.Cmd {
-	obj := m.objectlist.GetSelectedObject()
-	if obj == nil || obj.IsDir() {
-		return nil
-	}
-	srcKey := obj.Name()
-	opt := m.objectListOptionFromState()
-	defaultDst := fmt.Sprintf("s3://%s/%s", m.selectedBucket, srcKey)
-	m.modal.Show(
-		"Rename to",
-		defaultDst,
-		func(dstS3Uri string) tea.Cmd {
-			id := transferpanel.NewID()
-			ctx, cancel := context.WithCancel(context.Background())
-			// Sequence (not Batch): the row must exist before the op can
-			// emit its TransferDoneMsg, or a fast-failing op leaves a
-			// permanently-running row.
-			return tea.Sequence(
-				addTransferCmd(transferpanel.Transfer{
-					ID:     id,
-					Op:     transferpanel.OpRename,
-					Label:  fmt.Sprintf("rename %s -> %s", srcKey, dstS3Uri),
-					Status: transferpanel.StatusRunning,
-					Cancel: cancel,
-				}),
-				objectlist.RenameCmd(ctx, opt, srcKey, dstS3Uri, id),
-			)
-		},
-	)
-	return nil
-}
-
-// promptCopy opens a modal asking for the destination s3://bucket/key URI.
-func (m *Model) promptCopy() tea.Cmd {
-	obj := m.objectlist.GetSelectedObject()
-	if obj == nil || obj.IsDir() {
-		return nil
-	}
-	srcKey := obj.Name()
-	opt := m.objectListOptionFromState()
-	defaultDst := fmt.Sprintf("s3://%s/%s.copy", m.selectedBucket, srcKey)
-	m.modal.Show(
-		"Copy to",
-		defaultDst,
-		func(dstS3Uri string) tea.Cmd {
-			id := transferpanel.NewID()
-			ctx, cancel := context.WithCancel(context.Background())
-			// Sequence (not Batch): the row must exist before the op can
-			// emit its TransferDoneMsg, or a fast-failing op leaves a
-			// permanently-running row.
-			return tea.Sequence(
-				addTransferCmd(transferpanel.Transfer{
-					ID:     id,
-					Op:     transferpanel.OpCopy,
-					Label:  fmt.Sprintf("copy %s -> %s", srcKey, dstS3Uri),
-					Status: transferpanel.StatusRunning,
-					Cancel: cancel,
-				}),
-				objectlist.CopyCmd(ctx, opt, srcKey, dstS3Uri, id),
-			)
-		},
-	)
-	return nil
-}
-
-// promptMakeBucket opens a modal asking for a new bucket name. Region
-// defaults to the profile region (or us-east-1).
-func (m *Model) promptMakeBucket() tea.Cmd {
-	opt := m.bucketListOptionFromState()
-	listOpt := objectlist.Option{
-		Profile:        opt.Profile,
-		EndpointURL:    opt.EndpointURL,
-		PathStyle:      opt.PathStyle,
-		ConfigFile:     opt.ConfigFile,
-		CredentialFile: opt.CredentialFile,
-	}
-	m.modal.Show(
-		"Make bucket",
-		"my-new-bucket",
-		func(name string) tea.Cmd {
-			id := transferpanel.NewID()
-			ctx, cancel := context.WithCancel(context.Background())
-			// Sequence (not Batch): the row must exist before the op can
-			// emit its TransferDoneMsg, or a fast-failing op leaves a
-			// permanently-running row.
-			return tea.Sequence(
-				addTransferCmd(transferpanel.Transfer{
-					ID:     id,
-					Op:     transferpanel.OpMakeBucket,
-					Label:  fmt.Sprintf("mb s3://%s", name),
-					Status: transferpanel.StatusRunning,
-					Cancel: cancel,
-				}),
-				objectlist.MakeBucketCmd(ctx, listOpt, name, listOpt.Region, id),
-			)
-		},
-	)
-	return nil
-}
-
-// promptDeleteBucket opens a confirm modal for deleting the selected empty
-// bucket.
-func (m *Model) promptDeleteBucket() tea.Cmd {
-	b := m.bucketList.GetSelectedBucket()
-	if b == nil {
-		return nil
-	}
-	name := b.Title()
-	opt := m.bucketListOptionFromState()
-	listOpt := objectlist.Option{
-		Profile:        opt.Profile,
-		EndpointURL:    opt.EndpointURL,
-		PathStyle:      opt.PathStyle,
-		ConfigFile:     opt.ConfigFile,
-		CredentialFile: opt.CredentialFile,
-	}
-	body := fmt.Sprintf("Delete empty bucket %s?", name)
-	m.modal.ShowConfirm(
-		"Delete bucket",
-		body,
-		func() tea.Cmd {
-			id := transferpanel.NewID()
-			ctx, cancel := context.WithCancel(context.Background())
-			// Sequence (not Batch): the row must exist before the op can
-			// emit its TransferDoneMsg, or a fast-failing op leaves a
-			// permanently-running row.
-			return tea.Sequence(
-				addTransferCmd(transferpanel.Transfer{
-					ID:     id,
-					Op:     transferpanel.OpDeleteBucket,
-					Label:  fmt.Sprintf("rb s3://%s", name),
-					Status: transferpanel.StatusRunning,
-					Cancel: cancel,
-				}),
-				objectlist.DeleteBucketCmd(ctx, listOpt, name, id),
-			)
-		},
-	)
-	return nil
-}
-
-// errCmd wraps an error into a status-bar ErrMsg Cmd.
-func errCmd(err error) tea.Cmd {
-	return func() tea.Msg {
-		return types.ErrMsg{Err: err}
-	}
-}
-
-// handleVersionsKey dispatches the state-dependent 'v' key: the versions
-// overlay in the object list, the bucket-versioning toggle flow in the
-// bucket list, a no-op anywhere else (profile list).
-func (m *Model) handleVersionsKey() tea.Cmd {
-	switch m.state {
-	case state.ActiveObjectList:
-		return m.handleVersionsOpen()
-	case state.ActiveBucketList:
-		return m.handleVersioningToggle()
-	}
-	return nil
-}
-
-// handleVersionsOpen opens the object-versions overlay ('v') for the
-// highlighted file. A directory or nil selection surfaces a status-bar
-// error instead (prefixes have no version history of their own).
-func (m *Model) handleVersionsOpen() tea.Cmd {
-	if m.state != state.ActiveObjectList {
-		return nil
-	}
-	obj := m.objectlist.GetSelectedObject()
-	if obj == nil || obj.IsDir() {
-		return errCmd(fmt.Errorf("versions: select an object file (directories have no version history)"))
-	}
-	opt := m.objectListOptionFromState()
-	return m.versionView.Show(opt, m.selectedBucket, obj.Name())
-}
-
-// handleVersioningToggle ('v' in the bucket list) kicks off the async
-// GetBucketVersioning probe; the confirm modal opens when BucketStatusMsg
-// arrives (see handleBucketStatus) so the current status is shown in it.
-func (m *Model) handleVersioningToggle() tea.Cmd {
-	if m.state != state.ActiveBucketList {
-		return nil
-	}
-	b := m.bucketList.GetSelectedBucket()
-	if b == nil {
-		return nil
-	}
-	bopt := m.bucketListOptionFromState()
-	opt := objectlist.Option{
-		Profile:        bopt.Profile,
-		EndpointURL:    bopt.EndpointURL,
-		PathStyle:      bopt.PathStyle,
-		ConfigFile:     bopt.ConfigFile,
-		CredentialFile: bopt.CredentialFile,
-	}
-	return versionview.BucketStatusCmd(opt, b.Title())
-}
-
-// handleBucketStatus opens the versioning toggle confirm modal once the
-// bucket's current status is known. Probe failures (e.g. endpoints without
-// a versioning API) surface on the status bar. Mirroring the presign guard,
-// the modal is never opened behind another modal or a full-screen overlay;
-// the status falls back to a status-bar note instead.
-func (m *Model) handleBucketStatus(msg versionview.BucketStatusMsg) tea.Cmd {
-	if msg.Err != nil {
-		return errCmd(fmt.Errorf("bucket versioning: %w", msg.Err))
-	}
-	if m.overlayActive() {
-		m.statusBar.SetInfo(fmt.Sprintf("bucket %s versioning: %s", msg.Bucket, versionview.StatusLabel(msg.Status)))
-		return nil
-	}
-	enable := msg.Status != "Enabled"
-	target := "Suspended"
-	if enable {
-		target = "Enabled"
-	}
-	body := fmt.Sprintf("Bucket %s versioning is currently %s.\nSet it to %s?",
-		msg.Bucket, versionview.StatusLabel(msg.Status), target)
-	if enable && msg.Status == "" {
-		body += "\n\nnote: once versioned, a bucket can only be suspended, never unversioned"
-	}
-	opt := msg.Opt
-	bucket := msg.Bucket
-	m.modal.ShowConfirm(
-		"Bucket versioning",
-		body,
-		func() tea.Cmd {
-			id := transferpanel.NewID()
-			ctx, cancel := context.WithCancel(context.Background())
-			// Sequence (not Batch): the row must exist before the op can
-			// emit its TransferDoneMsg, or a fast-failing op leaves a
-			// permanently-running row.
-			return tea.Sequence(
-				addTransferCmd(transferpanel.Transfer{
-					ID:     id,
-					Op:     transferpanel.OpVersioning,
-					Label:  fmt.Sprintf("versioning s3://%s -> %s", bucket, target),
-					Status: transferpanel.StatusRunning,
-					Cancel: cancel,
-				}),
-				versionview.PutVersioningCmd(ctx, opt, bucket, enable, id),
-			)
-		},
-	)
-	return nil
-}
-
-// handleVersionAction routes an overlay row action (d/R/D on a version) to
-// its modal flow. The modal opens over the overlay (the overlay stays open
-// behind it; tui.go's View gives the modal render precedence).
-func (m *Model) handleVersionAction(msg versionview.ActionMsg) tea.Cmd {
-	// ActionMsg is delivered async, so a second d/R/D can land before the
-	// first modal was answered. Mirroring the presign guard, never clobber
-	// the open modal (a half-typed download path would be silently lost).
-	if m.modal.IsVisible() {
-		m.statusBar.SetInfo("finish the open dialog first")
-		return nil
-	}
-	switch msg.Kind {
-	case versionview.ActionDownload:
-		return m.promptVersionDownload(msg)
-	case versionview.ActionRestore:
-		return m.promptVersionRestore(msg)
-	case versionview.ActionDelete:
-		return m.promptVersionDelete(msg)
-	}
-	return nil
-}
-
-// promptVersionDownload opens the destination modal for downloading one
-// specific version. Delete markers carry no content, so they error out on
-// the status bar instead.
-func (m *Model) promptVersionDownload(msg versionview.ActionMsg) tea.Cmd {
-	short := versionview.ShortID(msg.Version.VersionID)
-	if msg.Version.IsDeleteMarker {
-		return errCmd(fmt.Errorf("download: %s@%s is a delete marker, not content", path.Base(msg.Key), short))
-	}
-	defaultPath := path.Base(msg.Key)
-	if defaultPath == "" || defaultPath == "." {
-		defaultPath = "./download"
-	}
-	opt, bucket, key, versionID := msg.Opt, msg.Bucket, msg.Key, msg.Version.VersionID
-	m.modal.Show(
-		fmt.Sprintf("Download %s@%s to", path.Base(key), short),
-		defaultPath,
-		func(localPath string) tea.Cmd {
-			id := transferpanel.NewID()
-			prog := transferpanel.NewProgress()
-			ctx, cancel := context.WithCancel(context.Background())
-			// Sequence (not Batch): the row must exist before the op can
-			// emit its TransferDoneMsg, or a fast-failing op leaves a
-			// permanently-running row.
-			return tea.Sequence(
-				addTransferCmd(transferpanel.Transfer{
-					ID:       id,
-					Op:       transferpanel.OpDownload,
-					Label:    fmt.Sprintf("s3://%s/%s@%s -> %s", bucket, key, short, localPath),
-					Status:   transferpanel.StatusRunning,
-					Progress: prog,
-					Cancel:   cancel,
-				}),
-				versionview.DownloadVersionCmd(ctx, opt, bucket, key, versionID, localPath, id, prog),
-			)
-		},
-	)
-	return nil
-}
-
-// promptVersionRestore opens the confirm modal for restoring a version as
-// latest (server-side copy onto the same key). Delete markers cannot be
-// copy-sourced; removing them is the D action instead.
-func (m *Model) promptVersionRestore(msg versionview.ActionMsg) tea.Cmd {
-	short := versionview.ShortID(msg.Version.VersionID)
-	if msg.Version.IsDeleteMarker {
-		return errCmd(fmt.Errorf("restore: %s@%s is a delete marker; use D to remove it (undelete)", path.Base(msg.Key), short))
-	}
-	opt, bucket, key, versionID := msg.Opt, msg.Bucket, msg.Key, msg.Version.VersionID
-	storageClass := msg.Version.StorageClass
-	// The copy only stacks a new version when versioning is Enabled; when
-	// Suspended (or never enabled) it is written as the "null" version,
-	// destroying any existing null version of the key — say so instead of
-	// promising a preserved history.
-	body := fmt.Sprintf("Restore %s@%s as the latest version?\n", key, short)
-	switch {
-	case msg.StatusKnown && msg.Status == "Enabled":
-		body += "A server-side copy is stacked on top; the history keeps this version."
-	case msg.StatusKnown:
-		body += fmt.Sprintf("warning: bucket versioning is %s — the copy is written as the \"null\" version, permanently overwriting the current null version of this key.", versionview.StatusLabel(msg.Status))
-	default:
-		body += "warning: the bucket's versioning status is unknown — unless it is Enabled, the copy permanently overwrites the current \"null\" version of this key."
-	}
-	m.modal.ShowConfirm(
-		"Restore version",
-		body,
-		func() tea.Cmd {
-			id := transferpanel.NewID()
-			ctx, cancel := context.WithCancel(context.Background())
-			// Sequence (not Batch): the row must exist before the op can
-			// emit its TransferDoneMsg, or a fast-failing op leaves a
-			// permanently-running row.
-			return tea.Sequence(
-				addTransferCmd(transferpanel.Transfer{
-					ID:     id,
-					Op:     transferpanel.OpCopy,
-					Label:  fmt.Sprintf("restore s3://%s/%s@%s", bucket, key, short),
-					Status: transferpanel.StatusRunning,
-					Cancel: cancel,
-				}),
-				versionview.RestoreVersionCmd(ctx, opt, bucket, key, versionID, storageClass, id),
-			)
-		},
-	)
-	return nil
-}
-
-// promptVersionDelete opens the confirm modal for permanently deleting one
-// version. On a delete-marker row the action is relabelled "remove delete
-// marker (undelete)" — removing the current marker brings the previous
-// version back as latest.
-func (m *Model) promptVersionDelete(msg versionview.ActionMsg) tea.Cmd {
-	short := versionview.ShortID(msg.Version.VersionID)
-	opt, bucket, key, versionID := msg.Opt, msg.Bucket, msg.Key, msg.Version.VersionID
-	title := "Delete version"
-	body := fmt.Sprintf("Permanently delete %s@%s?\nThis bypasses versioning and cannot be undone.", key, short)
-	label := fmt.Sprintf("delete version s3://%s/%s@%s", bucket, key, short)
-	if msg.Version.IsDeleteMarker {
-		title = "Remove delete marker (undelete)"
-		body = fmt.Sprintf("Remove the delete marker %s@%s?\nThe previous version becomes latest again (undelete).", key, short)
-		label = fmt.Sprintf("undelete s3://%s/%s (remove marker @%s)", bucket, key, short)
-	}
-	m.modal.ShowConfirm(
-		title,
-		body,
-		func() tea.Cmd {
-			id := transferpanel.NewID()
-			ctx, cancel := context.WithCancel(context.Background())
-			// Sequence (not Batch): the row must exist before the op can
-			// emit its TransferDoneMsg, or a fast-failing op leaves a
-			// permanently-running row.
-			return tea.Sequence(
-				addTransferCmd(transferpanel.Transfer{
-					ID:     id,
-					Op:     transferpanel.OpDelete,
-					Label:  label,
-					Status: transferpanel.StatusRunning,
-					Cancel: cancel,
-				}),
-				versionview.DeleteVersionCmd(ctx, opt, bucket, key, versionID, id),
-			)
-		},
-	)
-	return nil
-}
-
-// refreshAfterOp returns the tea.Cmd that re-fetches the list touched by
-// the completed op. Downloads/uploads don't need a refresh of the remote
-// list, but deletes/copies/renames/mb/rb/sync do.
-func (m *Model) refreshAfterOp(done transferpanel.TransferDoneMsg) tea.Cmd {
-	// A local-filesystem op (dual-pane local delete) never changes the
-	// remote listing: refresh the local pane only.
-	if done.Local {
-		return m.localList.Refresh()
-	}
-	var cmds []tea.Cmd
-	switch done.Op {
-	case transferpanel.OpDelete, transferpanel.OpCopy, transferpanel.OpRename,
-		transferpanel.OpUpload:
-		if m.state == state.ActiveObjectList {
-			cmds = append(cmds, m.objectlist.Fetch(m.objectListOptionFromState()))
-		}
-	case transferpanel.OpMakeBucket, transferpanel.OpDeleteBucket:
-		if m.state == state.ActiveBucketList {
-			opt := m.bucketListOptionFromState()
-			m.bucketList.SetLoading(true)
-			cmds = append(cmds, bucketlist.FetchBucketListCmd(&opt))
-		}
-	case transferpanel.OpSync:
-		// A sync may add/delete objects in the currently viewed listing.
-		switch m.state {
-		case state.ActiveObjectList:
-			cmds = append(cmds, m.objectlist.Fetch(m.objectListOptionFromState()))
-		case state.ActiveBucketList:
-			opt := m.bucketListOptionFromState()
-			m.bucketList.SetLoading(true)
-			cmds = append(cmds, bucketlist.FetchBucketListCmd(&opt))
-		}
-	}
-	// Downloads and syncs may have created files in the local pane's
-	// directory; refresh it (cursor kept) while dual mode is showing it.
-	if m.dualPane && (done.Op == transferpanel.OpDownload || done.Op == transferpanel.OpSync) {
-		if cmd := m.localList.Refresh(); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
-	}
-	if len(cmds) == 0 {
-		return nil
-	}
-	return tea.Batch(cmds...)
-}
-
-// promptSync starts the chained-modal sync flow. It prompts for source,
-// then destination, then a flags string, and on the final confirm runs
-// the sync via the syncmodal package.
-//
-// The chained-modal approach reuses Track B's modal as-is: each Show
-// call's onConfirm callback opens the next modal. The final callback
-// builds a storage.Storage from the active profile's endpoint/path-style
-// and dispatches the sync via syncmodal.NewCmd + tea.Every for the
-// polling loop.
-//
-// The single-pane flow passes the current s3://bucket/prefix as the
-// default source (so the user can sync the current prefix to a local dir
-// by typing the destination and hitting enter) and an empty destination.
-// Dual-pane mode prefills src with the focused pane's location and dst
-// with the other pane's (see promptDualSync); both stay editable. The
-// default flags string is always empty (a default size-and-mtime sync).
-func (m *Model) promptSync(defaultSrc, defaultDst string) tea.Cmd {
-	// Capture the active profile's endpoint/path-style so the final
-	// callback can build a storage.Storage. We resolve these up front
-	// (rather than inside the callback) because the user could navigate
-	// away while the modal is open.
-	conn := m.syncConnParams()
-
-	// The chained modals are reopened via ShowInputModalMsg rather than by
-	// calling m.modal.Show inside the callbacks: the callbacks run against
-	// a stale captured model, so the next modal must be opened message-style
-	// on the live model.
-	m.modal.Show(
-		"Sync source (s3://bucket/prefix or local dir)",
-		defaultSrc,
-		func(src string) tea.Cmd {
-			// Destination: empty for the user to type in single-pane (a
-			// local path for s3→local, or s3://bucket/prefix/ for
-			// local→s3 / s3→s3); the other pane's location in dual mode.
-			return showInputModalCmd("Sync destination", defaultDst, func(dst string) tea.Cmd {
-				return showInputModalCmd(
-					"Sync flags (--delete --size-only --dry-run --exclude=*.log)",
-					"",
-					func(flagsStr string) tea.Cmd {
-						return startSyncCmd(src, dst, flagsStr, conn)
-					},
-				)
-			})
-		},
-	)
-	return nil
-}
-
-// showInputModalCmd asks the root Update to open the input modal on the
-// live model (see types.ShowInputModalMsg).
-func showInputModalCmd(title, placeholder string, onConfirm func(string) tea.Cmd) tea.Cmd {
-	return func() tea.Msg {
-		return types.ShowInputModalMsg{
-			Title:       title,
-			Placeholder: placeholder,
-			OnConfirm:   onConfirm,
-		}
-	}
-}
-
-// connParams carries the connection facts a sync Cmd needs to build a
-// storage.Storage: the active profile's endpoint/path-style/name plus the
-// resolved AWS shared file paths.
-type connParams struct {
-	endpointURL    string
-	pathStyle      bool
-	profile        string
-	configFile     string
-	credentialFile string
-}
-
-// syncConnParams resolves the active profile's endpoint/path-style and
-// name for building a storage.Storage inside a sync Cmd. Resolved up front
-// by the prompt flows (never inside a modal callback, which runs against a
-// stale model).
-func (m *Model) syncConnParams() connParams {
-	conn := connParams{
-		configFile:     m.awsFiles.ConfigFile,
-		credentialFile: m.awsFiles.CredentialsFile,
-	}
-	if p := m.profileList.GetSelectedProfile(); p != nil {
-		conn.endpointURL = p.EndpointURL
-		conn.pathStyle = shouldUsePathStyle(conn.endpointURL)
-		conn.profile = m.selectedProfile
-	}
-	return conn
-}
-
-// startSyncCmd dispatches the user-typed sync flow ('s' key) with the
-// default "sync src -> dst" row label.
-func startSyncCmd(src, dst, flagsStr string, conn connParams) tea.Cmd {
-	label := fmt.Sprintf("sync %s -> %s", src, dst)
-	return syncTransferCmd(src, dst, label, syncmodal.ParseFlags(flagsStr), conn)
-}
-
-// syncTransferCmd dispatches one sync via syncmodal.NewCmd, plus the first
-// tea.Every poll tick. The SyncPollMsg handler in tui.go re-arms the ticker
-// while the sync is registered, so per-file progress keeps flowing to the
-// panel. The row carries the sync context's CancelFunc so 'x' aborts it.
-// Besides the 's' flow it backs the dual-pane directory copies, which pass
-// zero Flags (a plain recursive one-way copy) and a "dir: ..." label.
-//
-// The storage.Storage is built lazily inside the sync Cmd (StorageFn):
-// NewStorage resolves credentials and can block on network I/O, so it must
-// not run on the Update goroutine.
-func syncTransferCmd(src, dst, label string, flags syncmodal.Flags, conn connParams) tea.Cmd {
-	id := transferpanel.NewID()
-
-	// Use the S3Option that the objectlist flow already uses, so the sync
-	// talks to the same endpoint as the listing.
-	s3opt := s3store.S3Option{
-		UsePathStyle:   conn.pathStyle,
-		Profile:        conn.profile,
-		Endpoint:       conn.endpointURL,
-		ConfigFile:     conn.configFile,
-		CredentialFile: conn.credentialFile,
-	}
-	storageOpt := storage.NewStorageOption(s3opt, fsstore.LocalOption{})
-	ctx, cancel := context.WithCancel(context.Background())
-
-	// The row's shared Progress receives the AGGREGATE directory bytes
-	// (whole-plan done/total) from syncmodal once planning finishes, so the
-	// row bar tracks the directory, not the current file; until then it
-	// stays indeterminate (-1 total).
-	prog := transferpanel.NewProgress()
-
-	add := addTransferCmd(transferpanel.Transfer{
-		ID:       id,
-		Op:       transferpanel.OpSync,
-		Label:    label,
-		Status:   transferpanel.StatusRunning,
-		Cancel:   cancel,
-		Progress: prog,
-	})
-
-	syncCmd := syncmodal.NewCmd(syncmodal.CmdDeps{
-		Ctx: ctx,
-		StorageFn: func(ctx context.Context) (*storage.Storage, error) {
-			return storage.NewStorage(ctx, *storageOpt)
-		},
-		Src:        src,
-		Dst:        dst,
-		Flags:      flags,
-		TransferID: id,
-		Label:      label,
-		Progress:   prog,
-	})
-
-	poll := tea.Every(200*time.Millisecond, syncmodal.PollCmd(id))
-
-	// Sequence the add before the sync so the row exists when the sync's
-	// TransferDoneMsg arrives; the poll ticker runs alongside.
-	return tea.Batch(tea.Sequence(add, syncCmd), poll)
-}
-
-func (m *Model) setSize(width, height int) {
-	m.width = width
-	m.height = height
 }
 
 func (m *Model) initComponentsSize(msg tea.WindowSizeMsg) {
@@ -1180,7 +233,15 @@ func (m *Model) handleProfileSelect() (tea.Cmd, bool) {
 	}
 	selectedProfile := selectedItem.Title()
 	m.selectedProfile = selectedProfile
+	// The shared config is the baseline; a [profiles.<name>] override in
+	// lazys3's own config wins, so the same AWS profile can be used against
+	// a different region/endpoint without editing ~/.aws/config.
 	m.selectedRegion = selectedItem.Region()
+	if p, ok := m.profileStarts[selectedProfile]; ok {
+		if p.Region != "" {
+			m.selectedRegion = p.Region
+		}
+	}
 	// Plumb the profile's endpoint_url into the bucket list Option so
 	// non-AWS services (Aliyun OSS, Huawei OBS, ...) actually connect
 	// through the right endpoint. Path-style is forced for any
@@ -1201,7 +262,6 @@ func (m *Model) handleProfileSelect() (tea.Cmd, bool) {
 }
 
 func (m *Model) handleBucketSelect() tea.Cmd {
-	log.Println("handleBucketSelect called, state:", m.state)
 	var cmds []tea.Cmd
 
 	// 处理 bucket 选择（这里可以添加具体的业务逻辑）
@@ -1250,40 +310,6 @@ func (m *Model) handleObjectSelect() tea.Cmd {
 	}
 
 	return tea.Batch(cmds...)
-}
-
-// handleObjectUnSelect navigates one prefix level up. It works off the
-// model's current prefix (m.selectedObject) rather than the highlighted
-// item, so it also works on empty listings. Returns nil when already at
-// the bucket root — the caller then switches back to the bucket list.
-func (m *Model) handleObjectUnSelect() tea.Cmd {
-	cur := m.selectedObject
-	if cur == "" {
-		return nil
-	}
-
-	// Memoise the cursor in the prefix we're leaving.
-	m.objectlist.RememberPosition(m.selectedBucket, cur)
-
-	parts := strings.Split(strings.TrimSuffix(cur, "/"), "/")
-	parent := ""
-	if len(parts) > 1 {
-		parent = strings.Join(parts[:len(parts)-1], "/") + "/"
-	}
-	m.selectedObject = parent
-
-	s3uri := fmt.Sprintf("s3://%s", m.selectedBucket)
-	if parent != "" {
-		s3uri = fmt.Sprintf("s3://%s/%s", m.selectedBucket, parent)
-	}
-	log.Println("handleObjectUnSelect s3uri:", s3uri)
-
-	m.objectlist.SetTitle(s3uri)
-	// Restore the cursor position saved when we descended into cur (the
-	// bucket root uses prefix "").
-	m.objectlist.RestorePosition(m.selectedBucket, parent)
-
-	return m.objectlist.Fetch(m.objectListOptionFromState())
 }
 
 func (m *Model) handleForward(_ tea.Msg) tea.Cmd {
@@ -1369,6 +395,39 @@ func (m *Model) handleBackward() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+// handleObjectUnSelect navigates one prefix level up. It works off the
+// model's current prefix (m.selectedObject) rather than the highlighted
+// item, so it also works on empty listings. Returns nil when already at
+// the bucket root — the caller then switches back to the bucket list.
+func (m *Model) handleObjectUnSelect() tea.Cmd {
+	cur := m.selectedObject
+	if cur == "" {
+		return nil
+	}
+
+	// Memoise the cursor in the prefix we're leaving.
+	m.objectlist.RememberPosition(m.selectedBucket, cur)
+
+	parts := strings.Split(strings.TrimSuffix(cur, "/"), "/")
+	parent := ""
+	if len(parts) > 1 {
+		parent = strings.Join(parts[:len(parts)-1], "/") + "/"
+	}
+	m.selectedObject = parent
+
+	s3uri := fmt.Sprintf("s3://%s", m.selectedBucket)
+	if parent != "" {
+		s3uri = fmt.Sprintf("s3://%s/%s", m.selectedBucket, parent)
+	}
+
+	m.objectlist.SetTitle(s3uri)
+	// Restore the cursor position saved when we descended into cur (the
+	// bucket root uses prefix "").
+	m.objectlist.RestorePosition(m.selectedBucket, parent)
+
+	return m.objectlist.Fetch(m.objectListOptionFromState())
+}
+
 // resizeLists sizes all three remote lists (and the dual-pane local list)
 // from the current window size: a 50/50 split in dual mode, full width
 // otherwise. Sizing every list (not just the active one) keeps a list
@@ -1399,6 +458,18 @@ func (m *Model) resizeLists() {
 // previewHint is the status-bar nudge shown when 'p' is pressed on
 // something that has no byte content to preview.
 const previewHint = "preview works on files"
+
+func (m *Model) setSize(width, height int) {
+	m.width = width
+	m.height = height
+}
+
+// errCmd wraps an error into a status-bar ErrMsg Cmd.
+func errCmd(err error) tea.Cmd {
+	return func() tea.Msg {
+		return types.ErrMsg{Err: err}
+	}
+}
 
 // handleContentPreview ('p') opens the floating content-preview overlay
 // for the focused pane's highlighted file: a bounded local read with local

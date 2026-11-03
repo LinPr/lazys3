@@ -88,7 +88,7 @@ func TestCancelLatest(t *testing.T) {
 		ID: "t2", Status: StatusRunning, Cancel: func() { c2 = true },
 	}})
 
-	id, ok := m.CancelLatest()
+	id, _, ok := m.CancelLatest()
 	if !ok || id != "t2" {
 		t.Fatalf("CancelLatest() = (%q, %v), want (t2, true)", id, ok)
 	}
@@ -112,7 +112,7 @@ func TestCancelLatest(t *testing.T) {
 	if m.transfers[0].Status != StatusCanceled {
 		t.Fatalf("t1 status = %q, want canceled", m.transfers[0].Status)
 	}
-	if _, ok := m.CancelLatest(); ok {
+	if _, _, ok := m.CancelLatest(); ok {
 		t.Fatal("nothing left to cancel")
 	}
 }
@@ -475,7 +475,7 @@ func TestLifetimeCountsSurvivePruningAndCountOnce(t *testing.T) {
 		ID: "c", Op: OpDownload, Status: StatusRunning, Cancel: cancel,
 	}})
 	_ = ctx
-	if ok := m.CancelByID("c"); !ok {
+	if _, ok := m.CancelByID("c"); !ok {
 		t.Fatal("CancelByID failed")
 	}
 	m, _ = m.Update(TransferDoneMsg{ID: "c", Op: OpDownload, Err: context.Canceled})

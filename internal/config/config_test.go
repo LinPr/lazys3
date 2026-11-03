@@ -387,3 +387,50 @@ func TestProfileBucketRejectsUnsalvageable(t *testing.T) {
 		}
 	}
 }
+
+// TestProfileEndpointAndRegionOverride pins the [profiles.<name>] endpoint
+// and region overrides: a bare host gains a scheme, whitespace is trimmed,
+// and an entry carrying only an override (no bucket) is kept because it is
+// still useful.
+func TestProfileEndpointAndRegionOverride(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	body := `
+profiles:
+  internal:
+    bucket: "my-bucket"
+    endpoint: "  s3.internal.example.com  "
+    region: "  cn-shanghai  "
+  public:
+    endpoint: "https://s3.example.com"
+  regiononly:
+    region: "eu-west-2"
+  empty: {}
+`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := LoadFrom(path)
+
+	internal, ok := cfg.Profiles["internal"]
+	if !ok {
+		t.Fatal("internal profile dropped")
+	}
+	if internal.Endpoint != "https://s3.internal.example.com" {
+		t.Errorf("endpoint = %q, want a scheme added", internal.Endpoint)
+	}
+	if internal.Region != "cn-shanghai" {
+		t.Errorf("region = %q, want trimmed cn-shanghai", internal.Region)
+	}
+	if public := cfg.Profiles["public"]; public.Endpoint != "https://s3.example.com" {
+		t.Errorf("explicit scheme must be kept as-is, got %q", public.Endpoint)
+	}
+	// An override with no bucket is legitimate: it only retargets the
+	// endpoint/region for that profile.
+	if _, ok := cfg.Profiles["regiononly"]; !ok {
+		t.Error("region-only override should be kept")
+	}
+	// A completely empty entry has no purpose.
+	if _, ok := cfg.Profiles["empty"]; ok {
+		t.Error("empty entry should be dropped")
+	}
+}

@@ -30,11 +30,14 @@
 
 - 创建 bucket 与本地目录（`B`）、重命名（`r`）、拷贝（`c`）
 - 递归删除（`D`）：S3 文件夹（前缀）与本地目录，以及删除空 bucket —— 全部有确认弹窗把关
+- 递归搜索（`F`）：在整个 bucket 内查找 key，并直接跳到它所在的前缀
+- 分片清理（`P`）：列出并中止中断的多段上传 —— 这些分片在列表里看不到，但仍在计费
 - 浮动确认弹窗带 Yes/No 按钮：`tab`/方向键切换高亮，`enter` 执行高亮按钮（默认 Yes），`y`/`n`/`esc` 随时可用
 
 **版本与分享**
 
 - 预签名分享 URL（`Y`），有效期可配（1s..168h，默认 1h），生成后直接复制到剪贴板
+- 预签名上传 URL（`U`）：把 PUT 链接给别人，无需任何凭据即可写入当前前缀
 - 对象版本（对象列表按 `v`）：下载、恢复或删除指定版本
 - 切换 bucket 版本控制（bucket 列表按 `v`）：Enabled ⇄ Suspended
 - 复制路径（`y`）：bucket/对象的 `s3://` URI，或本地条目的绝对路径
@@ -43,6 +46,7 @@
 
 - 应用内可滚动的帮助浮层（`?`），内容与下方按键表一致
 - 单行状态栏：当前 profile、聚焦面板、选中数量、传输进度（传输进行时显示聚合进度条和各方向批次计数，空闲时显示累计 `↑`/`↓` 完成数与 `✗` 失败数）、最近一条提示（如 `o`/`O` 切换后的排序状态）或错误
+- 在 `config.yaml` 中按 profile 覆盖 endpoint/region，无需改动 `~/.aws/config`
 - 通过 `config.yaml` 自定义主题颜色，可选 Nerd Font 文件图标
 - 配置文件损坏不会导致崩溃 —— 非法值自动回退到默认值并记录日志
 
@@ -79,6 +83,9 @@
 | `B` | 创建 bucket（bucket 列表；对象列表中只给出提示） |
 | `s` | 目录同步（本地 ⇄ s3、s3 ⇄ s3；双栏模式自动预填两侧） |
 | `y` | 复制高亮 bucket/对象的 `s3://` URI 到剪贴板 |
+| `U` | 生成预签名上传（PUT）URL，让其他人写入这里 |
+| `F` | 递归搜索：在 bucket 内查找 key 并跳转 |
+| `P` | 列出并中止中断的多段上传（浑不计入列表但仍在计费） |
 | `Y` | 生成预签名分享 URL（仅对象文件） |
 | `v` | 对象版本（对象列表）/ 切换 bucket 版本控制 Enabled ⇄ Suspended（bucket 列表） |
 | `g` | 路径直达：`s3://bucket/prefix/` 可切换 bucket，`/path` 从 bucket 根开始，`rel/path` 相对当前前缀 |
@@ -206,6 +213,8 @@ profiles:
   # oss:
   #   bucket: "my-bucket"
   #   prefix: "some/prefix/"
+  #   endpoint: "https://s3.internal.example.com"  # optional: override endpoint_url
+  #   region: "cn-hangzhou"                        # optional: override region
 ```
 
 命令行参数：

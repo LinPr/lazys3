@@ -316,3 +316,18 @@ func writeFile(t *testing.T, path, content string) {
 func sprintf(format string, args ...any) string {
 	return fmt.Sprintf(format, args...)
 }
+
+// createMultipartUpload starts a multipart upload and leaves it in flight,
+// returning its upload ID. The upload is never completed: tests use it to
+// stage an interrupted upload that the cleanup code must find.
+func createMultipartUpload(t *testing.T, client *s3.Client, bucket, key string) string {
+	t.Helper()
+	out, err := client.CreateMultipartUpload(context.Background(), &s3.CreateMultipartUploadInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		t.Fatalf("CreateMultipartUpload(%s): %v", key, err)
+	}
+	return aws.ToString(out.UploadId)
+}

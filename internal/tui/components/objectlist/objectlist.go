@@ -102,7 +102,6 @@ func (m Model) Init() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case FetchObjectListResultMsg:
-		log.Println("objectlist got FetchObjectListResultMsg, err=", msg.Err, "count=", len(msg.Objects))
 		if msg.Gen != 0 && msg.Gen != m.fetchGen {
 			// A later navigation superseded this fetch; drop it (the
 			// current-generation fetch owns the loading state).

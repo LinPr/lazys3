@@ -78,3 +78,20 @@ func (s3store *S3Store) CopyObject(ctx context.Context, srcBucket, srcKey, dstBu
 	})
 	return err
 }
+
+// ListAllKeys returns every key under prefix, recursively, as plain
+// strings. The search flow only needs names (plus the directory it is in),
+// so it avoids carrying full Object structs for a whole bucket.
+func (s3store *S3Store) ListAllKeys(ctx context.Context, bucket, prefix string) ([]string, error) {
+	objs, err := s3store.ListObjectsRecursive(ctx, bucket, prefix)
+	if err != nil {
+		return nil, err
+	}
+	keys := make([]string, 0, len(objs))
+	for _, o := range objs {
+		if o.Key != nil {
+			keys = append(keys, *o.Key)
+		}
+	}
+	return keys, nil
+}

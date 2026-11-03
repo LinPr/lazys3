@@ -114,6 +114,19 @@ type Transfer struct {
 	Cancel     context.CancelFunc
 	StartedAt  time.Time
 	FinishedAt time.Time
+	// CleanupTarget, when set, names an S3 location holding multipart parts
+	// that must be aborted if this transfer is cancelled. A cancelled
+	// multipart upload does not abort itself: the parts stay on the server,
+	// invisible to listings and billed as storage until something removes
+	// them. The TUI reads this on cancel and runs the abort.
+	CleanupTarget *MultipartCleanup
+}
+
+// MultipartCleanup identifies the bucket/prefix whose in-progress parts a
+// cancelled upload may have left behind.
+type MultipartCleanup struct {
+	Bucket string
+	Prefix string
 }
 
 // TransferAddMsg queues a new transfer. Emitted as a tea.Cmd by the modal
@@ -438,28 +451,29 @@ func (m Model) Rows() []Transfer {
 // CancelByID cancels the named transfer if it is still queued/running and
 // carries a cancelable context. Used by the transfers overlay's 'x' on the
 // highlighted row.
-func (m *Model) CancelByID(id string) bool {
+func (m *Model) CancelByID(id string) (cleanup *MultipartCleanup, ok bool) {
 	for i := range m.transfers {
 		t := &m.transfers[i]
 		if t.ID != id {
 			continue
 		}
 		if (t.Status != StatusRunning && t.Status != StatusQueued) || t.Cancel == nil {
-			return false
+			return nil, false
 		}
 		t.Cancel()
 		t.Cancel = nil
 		m.noteTerminal(t, t.Status, StatusCanceled)
 		t.Status = StatusCanceled
 		t.FinishedAt = time.Now()
-		return true
+		return t.CleanupTarget, true
 	}
-	return false
+	return nil, false
 }
 
 // CancelLatest cancels the most recently queued/running transfer that has
-// a cancelable context. Returns the canceled ID and true on success.
-func (m *Model) CancelLatest() (string, bool) {
+// a cancelable context. Returns the canceled ID, any multipart cleanup the
+// caller must perform, and true on success.
+func (m *Model) CancelLatest() (id string, cleanup *MultipartCleanup, ok bool) {
 	for i := len(m.transfers) - 1; i >= 0; i-- {
 		t := &m.transfers[i]
 		if (t.Status == StatusRunning || t.Status == StatusQueued) && t.Cancel != nil {
@@ -469,10 +483,10 @@ func (m *Model) CancelLatest() (string, bool) {
 			t.Status = StatusCanceled
 			t.FinishedAt = time.Now()
 			m.visible = true
-			return t.ID, true
+			return t.ID, t.CleanupTarget, true
 		}
 	}
-	return "", false
+	return "", nil, false
 }
 
 // noteAdded maintains the status-bar batch counters when an upload or

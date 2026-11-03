@@ -30,11 +30,14 @@ A terminal UI for browsing and operating S3-compatible object storage (AWS S3, A
 
 - Create buckets and local directories (`B`), rename (`r`), copy (`c`)
 - Recursive delete (`D`): S3 folders (prefixes) and local directories, plus empty-bucket deletion — always behind a confirm modal
+- Recursive search (`F`): find a key anywhere in the bucket and jump to its prefix
+- Multipart cleanup (`P`): list and abort interrupted uploads — their parts never appear in a listing but are billed as storage
 - Floating confirm modals with Yes/No buttons: `tab`/arrows move the highlight, `enter` executes it (Yes is the default), `y`/`n`/`esc` always work
 
 **Versioning & sharing**
 
 - Presigned share URLs (`Y`) with configurable expiry (1s..168h, default 1h), copied straight to the clipboard
+- Presigned upload URLs (`U`): hand someone a PUT link so they can write into the current prefix without any credentials
 - Object versions (`v` in the object list): download, restore, or delete a specific version
 - Toggle bucket versioning (`v` in the bucket list): Enabled ⇄ Suspended
 - Yank (`y`): the `s3://` URI of a bucket/object, or the absolute path of a local entry
@@ -43,6 +46,7 @@ A terminal UI for browsing and operating S3-compatible object storage (AWS S3, A
 
 - Scrollable in-app help overlay (`?`) — the same keymap as the tables below
 - Single-line status bar: active profile, focused pane, selection count, running/done/failed transfer tallies, last info/error
+- Per-profile endpoint/region overrides in `config.yaml`, so a profile can be retargeted without editing `~/.aws/config`
 - Themeable colors and optional Nerd Font file icons via `config.yaml`
 - A broken config file never crashes the TUI — invalid values fall back to defaults with a log line
 
@@ -79,6 +83,9 @@ Press `?` inside lazys3 to see this list as a scrollable overlay.
 | `B` | make bucket (bucket list; the object list only hints) |
 | `s` | sync directory (local ⇄ s3, s3 ⇄ s3; dual-pane prefills both sides) |
 | `y` | yank the highlighted bucket/object `s3://` URI to the clipboard |
+| `U` | generate a presigned upload (PUT) URL for someone else to write here |
+| `F` | recursive search: find a key anywhere in the bucket, jump to it |
+| `P` | list and abort interrupted multipart uploads (billed, invisible) |
 | `Y` | generate presigned share URL (object files only) |
 | `v` | object versions (object list) / toggle bucket versioning Enabled ⇄ Suspended (bucket list) |
 | `g` | go to path: `s3://bucket/prefix/` switches bucket, `/path` from the bucket root, `rel/path` from here |
@@ -207,6 +214,8 @@ profiles:
   # oss:
   #   bucket: "my-bucket"
   #   prefix: "some/prefix/"
+  #   endpoint: "https://s3.internal.example.com"  # optional: override endpoint_url
+  #   region: "cn-hangzhou"                        # optional: override region
 ```
 
 Flags:

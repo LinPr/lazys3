@@ -49,6 +49,20 @@ const (
 	// highlighted object (files only, remote pane).
 	Presign = "Y"
 
+	// PresignUpload (shift+U) generates a presigned PUT URL so someone else
+	// can upload to the current prefix without sharing credentials.
+	PresignUpload = "U"
+
+	// Search (shift+F, mnemonic "find") searches the whole bucket
+	// recursively and jumps to the first match; '/' only narrows the
+	// current listing.
+	Search = "F"
+
+	// MultipartCleanup (shift+P) lists and aborts interrupted multipart
+	// uploads under the current prefix: their parts are invisible to
+	// listings but billed until cleaned up.
+	MultipartCleanup = "P"
+
 	// TransfersToggle opens/closes the live transfers overlay (global,
 	// handled in tui.go).
 	TransfersToggle = "t"

@@ -21,6 +21,9 @@ type PresignDoneMsg struct {
 	Key    string
 	URL    string
 	Expiry time.Duration
+	// Method is "GET" (default, empty means GET) or "PUT" for an upload
+	// URL, so the result modal can say what the link is good for.
+	Method string
 	Err    error
 }
 
@@ -67,5 +70,30 @@ func PresignCmd(opt Option, key, expiryStr string) tea.Cmd {
 		}
 		url, err := st.PresignGetObject(ctx, bucket, key, expiry)
 		return PresignDoneMsg{Bucket: bucket, Key: key, URL: url, Expiry: expiry, Err: err}
+	}
+}
+
+// PresignPutCmd generates a presigned PUT (upload) URL for key. It is the
+// counterpart of PresignCmd: the holder can upload a file to that key with
+// a plain HTTP PUT and no credentials, which is the only way to hand
+// someone a write permission without sharing the access key.
+func PresignPutCmd(opt Option, key, expiryStr string) tea.Cmd {
+	return func() tea.Msg {
+		bucket, _, err := bucketFromOption(opt)
+		if err != nil {
+			return PresignDoneMsg{Key: key, Err: err}
+		}
+		expiry, err := ParsePresignExpiry(expiryStr)
+		if err != nil {
+			return PresignDoneMsg{Bucket: bucket, Key: key, Err: err}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), presignTimeout)
+		defer cancel()
+		st, err := newStorageFromOption(ctx, opt)
+		if err != nil {
+			return PresignDoneMsg{Bucket: bucket, Key: key, Err: err}
+		}
+		url, err := st.PresignPutObject(ctx, bucket, key, expiry)
+		return PresignDoneMsg{Bucket: bucket, Key: key, URL: url, Expiry: expiry, Method: "PUT", Err: err}
 	}
 }

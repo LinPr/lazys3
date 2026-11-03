@@ -98,7 +98,6 @@ func LoadAwsConfig(files appcfg.AWSFiles) ([]config.SharedConfig, error) {
 			continue
 		}
 		seen[section] = true
-		log.Println("section:", section)
 		sharedConf, err := config.LoadSharedConfigProfile(context.Background(), section,
 			func(o *config.LoadSharedConfigOptions) {
 				if len(configFiles) > 0 {

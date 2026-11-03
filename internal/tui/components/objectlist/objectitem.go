@@ -3,7 +3,6 @@ package objectlist
 import (
 	"context"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
@@ -128,7 +127,6 @@ type FetchObjectListResultMsg struct {
 const fetchTimeout = 30 * time.Second
 
 func FetchObjectListCmd(o Option) tea.Cmd {
-	log.Printf("FetchObjectListCmd option: S3Uri=%q Profile=%q Region=%q PathStyle=%v Endpoint=%q", o.S3Uri, o.Profile, o.Region, o.PathStyle, o.EndpointURL)
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), fetchTimeout)
 		defer cancel()

@@ -7,6 +7,7 @@
 // directories become one recursive sync row each (a one-way sync without
 // --delete through the storage sync engine). The local-only ops (D/r/B/y
 // with local focus) live in localops.go.
+
 package tui
 
 import (

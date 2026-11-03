@@ -28,7 +28,7 @@ func underlinedRunes(s string) string {
 	for i := 0; i < len(rs); {
 		if rs[i] == 0x1b && i+1 < len(rs) && rs[i+1] == '[' {
 			j := i + 2
-			for j < len(rs) && !(rs[j] >= 0x40 && rs[j] <= 0x7e) {
+			for j < len(rs) && (rs[j] < 0x40 || rs[j] > 0x7e) {
 				j++
 			}
 			if j < len(rs) && rs[j] == 'm' {

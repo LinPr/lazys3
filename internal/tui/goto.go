@@ -12,6 +12,7 @@
 // Like every modal flow, onConfirm runs against a stale captured model, so
 // the confirm emits a goto*Msg that tui.go routes back here on the live
 // model.
+
 package tui
 
 import (

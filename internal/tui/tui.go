@@ -60,6 +60,21 @@ type Model struct {
 	selectedProfile string
 	selectedBucket  string
 	selectedObject  string
+	// selectedRegion is the active profile's shared-config region, threaded
+	// into every object-list/bucket-list Option (empty lets the SDK fall
+	// back to its own default).
+	selectedRegion string
+	// profileStarts holds the [profiles.<name>] startup locations from the
+	// lazys3 config. Selecting such a profile opens the bucket/prefix
+	// directly, skipping ListBuckets (see start.go).
+	profileStarts map[string]config.Profile
+	// startProfile is the --profile value: the first profile listing
+	// auto-selects that profile and opens its start location.
+	startProfile string
+	// cliStart is the positional s3://bucket/prefix argument. It overrides
+	// the configured start location for the first profile selected, then
+	// is consumed (later profile switches use their own config).
+	cliStart *StartLocation
 	// Dual-pane (local ⇄ remote) mode; see dualpane.go. paneFocus is
 	// meaningful only while dualPane: entering focuses the local pane,
 	// exiting resets to focusRemote. Focus and state are orthogonal:
@@ -87,6 +102,25 @@ func NewLazyS3Model() Model {
 // style package before calling this) plus the resolved AWS shared file
 // paths. The zero Config keeps every default.
 func NewLazyS3ModelWithConfig(cfg config.Config, awsFiles config.AWSFiles) Model {
+	return NewLazyS3ModelWithOptions(cfg, awsFiles, Options{})
+}
+
+// Options carries the command-line startup overrides. The zero value keeps
+// the interactive profile picker and the config's per-profile start
+// locations.
+type Options struct {
+	// Profile, when non-empty, is selected automatically once the AWS
+	// shared config has been read (skipping the profile picker).
+	Profile string
+	// Start, when non-nil, is the positional s3://bucket/prefix argument.
+	// It overrides the profile's configured start location for the first
+	// profile selected.
+	Start *StartLocation
+}
+
+// NewLazyS3ModelWithOptions constructs the top-level model with the CLI
+// startup overrides applied.
+func NewLazyS3ModelWithOptions(cfg config.Config, awsFiles config.AWSFiles, opts Options) Model {
 	// The bubbletea-beta1 renderer workaround (renderer.go, removed) is
 	// gone: v2.0.8 dropped the TEA_STANDARD_RENDERER escape hatch, so no
 	// pre-Run env tweak is possible. It forced the standard renderer on
@@ -138,6 +172,9 @@ func NewLazyS3ModelWithConfig(cfg config.Config, awsFiles config.AWSFiles) Model
 		versionView:   versionview.NewModel(),
 		localList:     localList,
 		mouseEnabled:  false,
+		profileStarts: cfg.Profiles,
+		startProfile:  opts.Profile,
+		cliStart:      opts.Start,
 	}
 }
 
@@ -752,6 +789,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		newProfileListModel, cmd := m.profileList.Update(msg)
 		m.profileList = newProfileListModel
 		cmds = append(cmds, cmd)
+		// --profile: once the shared config has been read (and the picker
+		// has the items), select that profile exactly as if the user had
+		// pressed enter on it.
+		if res, ok := msg.(profilelist.ReadAwsConfigResult); ok && m.startProfile != "" {
+			cmds = append(cmds, m.autoSelectProfile(res))
+		}
 
 	case state.ActiveBucketList:
 		newBucketListModel, cmd := m.bucketList.Update(msg)

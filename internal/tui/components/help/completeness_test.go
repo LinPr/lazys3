@@ -150,7 +150,7 @@ func TestHelpDocumentsKeysExactlyOnce(t *testing.T) {
 		}
 		allPane := len(groups) <= limit
 		for g := range groups {
-			if !paneGroups[g] && !(overlayScrollKeys[tok] && g == "Overlays") {
+			if !paneGroups[g] && (!overlayScrollKeys[tok] || g != "Overlays") {
 				allPane = false
 			}
 		}

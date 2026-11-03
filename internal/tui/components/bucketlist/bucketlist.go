@@ -2,6 +2,7 @@
 package bucketlist
 
 import (
+	"errors"
 	"fmt"
 	"log"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/LinPr/lazys3/internal/tui/components/filter"
 	"github.com/LinPr/lazys3/internal/tui/components/style"
 	"github.com/LinPr/lazys3/internal/tui/types"
+	"github.com/aws/smithy-go"
 )
 
 const BucketListTitle = "S3 Buckets"
@@ -34,6 +36,11 @@ type Model struct {
 	height  int
 	focused bool
 	loading bool
+	// fetched reports whether a fetch has completed for the current
+	// Option (successfully or not). A profile with a configured start
+	// location skips ListBuckets entirely, so the bucket list stays
+	// unfetched until the user opens it (see tui.ensureBucketListLoaded).
+	fetched bool
 }
 
 func NewModel() Model {
@@ -70,12 +77,23 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case FetchBucketListResultMsg:
 		m.SetLoading(false)
+		m.fetched = true
 		buckets, err := msg.Buckets, msg.Err
 		if err != nil {
 			// Clear the listing and surface the failure on the status bar so
 			// an errored fetch is distinguishable from an empty account.
 			m.SetBuckets(nil)
 			log.Println("Error fetching bucket list:", err)
+			// The usual cause of a denied ListBuckets is bucket-scoped
+			// credentials (s3:ListBucket on one bucket, no
+			// s3:ListAllMyBuckets). The status bar is one middle-truncated
+			// line and the SDK's message is long and repetitive, so swap in a
+			// short actionable hint; the full error stays in the debug log.
+			if isAccessDenied(err) {
+				return m, func() tea.Msg {
+					return types.ErrMsg{Err: fmt.Errorf("list buckets: access denied — press 'g' to jump, or set profiles.<name>.bucket in config.yaml")}
+				}
+			}
 			return m, func() tea.Msg {
 				return types.ErrMsg{Err: fmt.Errorf("list buckets: %w", err)}
 			}
@@ -86,6 +104,20 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.bucketlist, cmd = m.bucketlist.Update(msg)
 	return m, cmd
+}
+
+// isAccessDenied reports whether err is an S3 AccessDenied/InvalidAccessKeyId
+// style authorization failure (the codes bucket-scoped credentials hit).
+func isAccessDenied(err error) bool {
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	switch apiErr.ErrorCode() {
+	case "AccessDenied", "AccessDeniedException", "AllAccessDisabled", "InvalidAccessKeyId", "SignatureDoesNotMatch":
+		return true
+	}
+	return false
 }
 
 // View renders the bordered list at exactly the outer size from SetSize.
@@ -130,11 +162,24 @@ func (m *Model) SetLoading(v bool) {
 // Loading reports whether a fetch is in flight.
 func (m Model) Loading() bool { return m.loading }
 
+// Fetched reports whether a fetch has completed (successfully or not) for
+// the current Option.
+func (m Model) Fetched() bool { return m.fetched }
+
 func (m *Model) SetTitle(title string) {
 	m.Title = title
 }
 
+// SetOption points the list at a (new) profile/endpoint. A changed Option
+// invalidates the previous listing: the old buckets belong to another
+// account and must not linger while the new fetch is in flight (or when a
+// configured start location skips the fetch entirely).
 func (m *Model) SetOption(opt *Option) {
+	if m.Option == nil || m.Option.Profile != opt.Profile || m.Option.EndpointURL != opt.EndpointURL {
+		m.fetched = false
+		m.SetLoading(false)
+		m.SetBuckets(nil)
+	}
 	m.Option = opt
 }
 

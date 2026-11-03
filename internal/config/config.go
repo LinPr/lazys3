@@ -49,11 +49,23 @@ type Local struct {
 	StartDir string `yaml:"start_dir"` // overrides the process cwd when set
 }
 
+// Profile configures the startup location for one AWS shared-config
+// profile. When that profile is selected, lazys3 opens Bucket/Prefix
+// directly instead of calling ListBuckets: bucket-scoped credentials
+// (common in OSS/OBS/COS RAM policies and least-privilege S3 policies)
+// often deny s3:ListAllMyBuckets, and without this the user would have to
+// jump with 'g' on every launch. An empty Bucket disables the entry.
+type Profile struct {
+	Bucket string `yaml:"bucket"`
+	Prefix string `yaml:"prefix"`
+}
+
 // Config is the root of the config file schema.
 type Config struct {
-	Theme Theme `yaml:"theme"`
-	UI    UI    `yaml:"ui"`
-	Local Local `yaml:"local"`
+	Theme    Theme              `yaml:"theme"`
+	UI       UI                 `yaml:"ui"`
+	Local    Local              `yaml:"local"`
+	Profiles map[string]Profile `yaml:"profiles"`
 }
 
 // Path returns the default config file location:
@@ -202,6 +214,36 @@ func (c *Config) sanitize() {
 			c.Local.StartDir = d
 		}
 	}
+
+	// Profile start locations: a bucket is required; a prefix is optional
+	// and always normalized to a "/"-terminated listing prefix. Invalid
+	// entries are dropped (with a log line) so a typo cannot make profile
+	// selection jump somewhere unintended.
+	for name, p := range c.Profiles {
+		p.Bucket = strings.TrimSpace(p.Bucket)
+		p.Prefix = normalizeKeyPrefix(p.Prefix)
+		if p.Bucket == "" || strings.ContainsAny(p.Bucket, "/ \t") {
+			log.Printf("config: [profiles.%s] invalid bucket %q, entry ignored", name, p.Bucket)
+			delete(c.Profiles, name)
+			continue
+		}
+		c.Profiles[name] = p
+	}
+}
+
+// normalizeKeyPrefix trims surrounding whitespace and slashes and guarantees
+// a single trailing "/" on a non-empty prefix. A prefix is a literal key
+// prefix (not a path to resolve), so "." and ".." segments are left alone.
+func normalizeKeyPrefix(p string) string {
+	p = strings.TrimSpace(p)
+	p = strings.Trim(p, "/")
+	if p == "" {
+		return ""
+	}
+	for strings.Contains(p, "//") {
+		p = strings.ReplaceAll(p, "//", "/")
+	}
+	return p + "/"
 }
 
 // defaultFile is the commented template written on first run. Every key is
@@ -225,6 +267,15 @@ ui:
 
 local:
   # start_dir: ""                # local pane start directory, "~" ok (default: process cwd)
+
+profiles:
+  # Per-profile startup location. When the profile is selected, lazys3 opens
+  # this bucket/prefix directly instead of calling ListBuckets, which
+  # bucket-scoped credentials often deny. The prefix is optional and always
+  # treated as a directory prefix ("logs" lists "logs/").
+  # oss:
+  #   bucket: "my-bucket"
+  #   prefix: "some/prefix/"
 `
 
 // writeDefault writes the commented template, creating parent directories.

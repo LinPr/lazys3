@@ -24,6 +24,7 @@
 - 目录同步（`s`）：本地 ⇄ S3、S3 ⇄ S3；双栏模式下自动预填两侧路径
 - 实时传输浮层（`t`），带进度条、最新在前；`x` 取消正在运行的传输
 - 路径直达（`g`）：直接跳转到 `s3://bucket/prefix/` 或本地目录，无需逐级导航
+- 启动位置：可在 `config.yaml` 中按 profile 配置启动 bucket/prefix，或用 `lazys3 s3://bucket/prefix/` 直接进入 —— 不会调用 `ListBuckets`，因此只有 bucket 级权限的凭据也能使用
 
 **管理**
 
@@ -167,6 +168,12 @@ lazys3
 
 选择一个 profile，按 `enter` 列出 bucket，随时按 `?` 查看完整按键表。
 
+如果凭据只有 bucket 级权限、`s3:ListAllMyBuckets` 被拒绝，可以完全跳过 bucket 选择：
+
+```sh
+lazys3 --profile oss s3://my-bucket/logs/      # profile 与启动位置都由命令行指定
+```
+
 ## 配置
 
 lazys3 读取 `$XDG_CONFIG_HOME/lazys3/config.yaml`（默认 `~/.config/lazys3/config.yaml`）。首次运行会写入一份带注释的模板，方便发现所有配置项。所有键都是可选的；非法值会回退到内置默认值并记录日志。
@@ -191,6 +198,14 @@ ui:
 
 local:
   # start_dir: ""                # local pane start directory, "~" ok (default: process cwd)
+
+profiles:
+  # 按 profile 配置启动位置。选中该 profile 后，lazys3 直接打开这个
+  # bucket/prefix，不调用 ListBuckets —— 只有 bucket 级权限的凭据通常
+  # 无法列出全部 bucket。prefix 可选，始终按目录前缀处理（"logs" 会列出 "logs/"）。
+  # oss:
+  #   bucket: "my-bucket"
+  #   prefix: "some/prefix/"
 ```
 
 命令行参数：
@@ -198,11 +213,15 @@ local:
 - `--config <path>` —— 使用指定的 lazys3 配置文件替代默认位置（`lazys3 --config ./lazys3.yaml`）；文件必须存在、可读且是合法 YAML。
 - `--aws-config <path>` —— AWS 共享 config 文件（`lazys3 --aws-config ~/work/aws-config`）；优先级：flag > `AWS_CONFIG_FILE` > `~/.aws/config`。
 - `--aws-credentials <path>` —— AWS 共享 credentials 文件（`lazys3 --aws-credentials ~/work/aws-credentials`）；优先级：flag > `AWS_SHARED_CREDENTIALS_FILE` > `~/.aws/credentials`。
+- `--profile <name>` —— 读取完 AWS 共享配置后自动选中该 profile，跳过 profile 选择界面（`lazys3 --profile oss`）。
+- `lazys3 [s3://bucket/prefix/]` —— 可选的位置参数，作为本次启动的起始位置；它会覆盖所选 profile 的配置，prefix 会被规范化为目录前缀。
 
 说明：
 
 - 旧版本使用 `config.toml`，现已不再读取 —— 请重命名为 `config.yaml` 并把内容转换为 YAML 语法（stderr 会打印提示，且不会写模板覆盖它）。
 - `local.start_dir` 支持 `~` 和相对路径（相对启动目录解析）；必须是已存在的目录，否则会被忽略。
+- profile 启动位置或位置参数会直接打开对象列表，不调用 `ListBuckets`。bucket 列表会在你第一次返回它时才拉取，因此访问被拒的错误只会在真正打开该列表时出现。
+- `--profile` 必须是解析后的 AWS 共享配置中存在的 profile；否则仍停留在 profile 选择界面，并在状态栏提示错误。
 - 旧版本的 `ui.transfer_panel_height` 已废弃且被忽略 —— 底部传输面板已被全屏传输浮层（`t`）取代。旧配置文件仍可正常加载。
 
 ## 许可证

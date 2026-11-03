@@ -304,10 +304,12 @@ func (m *Model) showRemoteImage(req *PreviewRequest) tea.Cmd {
 		}
 		defer os.Remove(tmpf.Name()) //nolint:errcheck
 		if _, err = io.Copy(tmpf, out.Body); err != nil {
-			tmpf.Close()
+			_ = tmpf.Close()
 			return ContentMsg{Seq: seq, Err: err}
 		}
-		tmpf.Close()
+		if err := tmpf.Close(); err != nil {
+			return ContentMsg{Seq: seq, Err: err}
+		}
 		data, err := runChafa(ctx, chafa, tmpf.Name(), imgW, imgH)
 		if err != nil {
 			return ContentMsg{Seq: seq, Err: err}

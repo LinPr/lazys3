@@ -216,11 +216,15 @@ func (c *Config) sanitize() {
 	}
 
 	// Profile start locations: a bucket is required; a prefix is optional
-	// and always normalized to a "/"-terminated listing prefix. Invalid
-	// entries are dropped (with a log line) so a typo cannot make profile
-	// selection jump somewhere unintended.
+	// and always normalized to a "/"-terminated listing prefix. The bucket
+	// is normalised as forgivingly as the prefix: users write the same
+	// bucket as "my-bucket", "/my-bucket/" or "s3://my-bucket", and
+	// silently dropping one of those spellings would send them back to the
+	// ListBuckets call this feature exists to avoid. Only a bucket that
+	// cannot be salvaged (empty, or still containing whitespace or an
+	// interior "/") is dropped, with a log line.
 	for name, p := range c.Profiles {
-		p.Bucket = strings.TrimSpace(p.Bucket)
+		p.Bucket = normalizeBucket(p.Bucket)
 		p.Prefix = normalizeKeyPrefix(p.Prefix)
 		if p.Bucket == "" || strings.ContainsAny(p.Bucket, "/ \t") {
 			log.Printf("config: [profiles.%s] invalid bucket %q, entry ignored", name, p.Bucket)
@@ -229,6 +233,20 @@ func (c *Config) sanitize() {
 		}
 		c.Profiles[name] = p
 	}
+}
+
+// normalizeBucket strips the accepted s3://-URI decorations from a bucket
+// so "/my-bucket/", "s3://my-bucket" and "s3://my-bucket/" all mean the
+// same bucket. An interior "/" (a whole object URI) is left alone for the
+// caller's validation to reject: guessing which part is the bucket would
+// be worse than refusing.
+func normalizeBucket(b string) string {
+	b = strings.TrimSpace(b)
+	if rest, ok := strings.CutPrefix(b, "s3://"); ok {
+		b = rest
+	}
+	b = strings.Trim(b, "/")
+	return strings.TrimSpace(b)
 }
 
 // normalizeKeyPrefix trims surrounding whitespace and slashes and guarantees

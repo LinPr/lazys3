@@ -333,3 +333,57 @@ func TestDefaultTemplateDocumentsProfiles(t *testing.T) {
 		t.Errorf("written default file should load with no profiles, got %#v", cfg.Profiles)
 	}
 }
+
+// TestProfileBucketAcceptsURIAndSlashSpellings pins the forgiving bucket
+// normalization: the same bucket written as a bare name, an s3:// URI, or
+// with surrounding slashes must all be accepted. Regression: a "/" was
+// treated as "invalid", so "/my-bucket/" silently dropped the whole entry
+// and profile selection fell back to ListBuckets — the exact call this
+// feature exists to avoid for bucket-scoped credentials.
+func TestProfileBucketAcceptsURIAndSlashSpellings(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"my-bucket", "my-bucket"},
+		{"/my-bucket/", "my-bucket"},
+		{"s3://my-bucket", "my-bucket"},
+		{"s3://my-bucket/", "my-bucket"},
+		{"  s3://my-bucket/  ", "my-bucket"},
+		{"/my-bucket", "my-bucket"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.in, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			body := "profiles:\n  oss:\n    bucket: \"" + tc.in + "\"\n    prefix: \"logs\"\n"
+			if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			cfg := LoadFrom(path)
+			got, ok := cfg.Profiles["oss"]
+			if !ok {
+				t.Fatalf("bucket %q was dropped; want it normalized to %q", tc.in, tc.want)
+			}
+			if got.Bucket != tc.want {
+				t.Errorf("bucket = %q, want %q", got.Bucket, tc.want)
+			}
+			if got.Prefix != "logs/" {
+				t.Errorf("prefix = %q, want logs/", got.Prefix)
+			}
+		})
+	}
+}
+
+// TestProfileBucketRejectsUnsalvageable pins that only genuinely unusable
+// buckets are dropped: an interior "/" (a whole object URI) is refused
+// rather than guessed at, and whitespace stays invalid.
+func TestProfileBucketRejectsUnsalvageable(t *testing.T) {
+	for _, bad := range []string{"s3://bucket/key", "my/bucket", "my bucket", "", "   "} {
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		body := "profiles:\n  oss:\n    bucket: \"" + bad + "\"\n"
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		cfg := LoadFrom(path)
+		if _, ok := cfg.Profiles["oss"]; ok {
+			t.Errorf("bucket %q should be rejected, got %+v", bad, cfg.Profiles["oss"])
+		}
+	}
+}

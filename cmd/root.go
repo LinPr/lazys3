@@ -129,7 +129,7 @@ func (o *Options) Run() error {
 	if warn != "" {
 		fmt.Fprintln(os.Stderr, warn)
 	}
-	style.Apply(cfg.Theme)
+	style.Apply(cfg.Theme.Mode, cfg.Theme)
 	style.SetNerdFont(cfg.UI.NerdFont)
 
 	// Resolve the AWS shared config/credentials paths once (flag > env >

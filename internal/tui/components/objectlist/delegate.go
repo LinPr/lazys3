@@ -49,7 +49,7 @@ type selectDelegate struct {
 }
 
 func newSelectDelegate(selected *selectionSet) selectDelegate {
-	styles := list.NewDefaultItemStyles(true)
+	styles := style.ItemStyles()
 	// Theme override for the highlighted row (style.Apply runs before the
 	// components are constructed).
 	if c := style.SelectedItemFg; c != nil {

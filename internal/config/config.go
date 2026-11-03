@@ -23,6 +23,9 @@ import (
 // Theme overrides the style package's package-level colors. Values are hex
 // strings like "#20e71c" (3- or 6-digit); empty keeps the default.
 type Theme struct {
+	// Mode picks a built-in palette ("dark" or "light"); the per-colour
+	// keys below override individual entries on top of it.
+	Mode            string `yaml:"mode"`
 	FocusedBorder   string `yaml:"focused_border"`
 	UnfocusedBorder string `yaml:"unfocused_border"`
 	TitleFg         string `yaml:"title_fg"`
@@ -184,6 +187,12 @@ func validColor(key, v string) string {
 // their zero (default) with a log line.
 func (c *Config) sanitize() {
 	t := &c.Theme
+	switch t.Mode {
+	case "", "dark", "light":
+	default:
+		log.Printf("config: [theme] mode: invalid value %q (want dark|light), using dark", t.Mode)
+		t.Mode = ""
+	}
 	t.FocusedBorder = validColor("focused_border", t.FocusedBorder)
 	t.UnfocusedBorder = validColor("unfocused_border", t.UnfocusedBorder)
 	t.TitleFg = validColor("title_fg", t.TitleFg)
@@ -292,11 +301,13 @@ const defaultFile = `# lazys3 configuration.
 # All keys are optional; the commented values show the built-in defaults.
 
 theme:
-  # Colors are hex strings: "#rgb" or "#rrggbb".
-  # focused_border: "#20e71c"    # border of the focused pane
-  # unfocused_border: "#555555"  # border of the unfocused pane (dual-pane mode)
-  # title_fg: "#e39f00"          # status-bar profile chip foreground
-  # title_bg: "#444745"          # status-bar profile chip background
+  # mode: "dark"                   # built-in palette: dark | light
+  # Colors are hex strings: "#rgb" or "#rrggbb"; the keys below override
+  # individual entries of the chosen palette.
+  # focused_border: "#D9A441"    # border of the focused pane
+  # unfocused_border: "#4A4238"  # border of the unfocused pane (dual-pane mode)
+  # title_fg: "#1C1917"          # list/status chip foreground
+  # title_bg: "#D9A441"          # list/status chip background
   # status_error_fg: "#ffffff"   # status-bar error text
   # selected_fg: ""              # highlighted list row foreground
 

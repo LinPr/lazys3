@@ -49,7 +49,7 @@ func NewModel() Model {
 
 	delegate := list.NewDefaultDelegate()
 	delegate.ShowDescription = false
-	delegate.Styles = NewCustomItemStyles(true)
+	delegate.Styles = style.ItemStyles()
 
 	bucketlist := list.New(items, delegate, 0, 0)
 	bucketlist.Styles = CustomStyle(true)

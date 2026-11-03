@@ -44,14 +44,37 @@ go test -tags=e2e ./e2e/...               # e2e (gofakes3 by default)
 
 By default the e2e suite spins up an in-process [gofakes3](https://github.com/johannesboyne/gofakes3) server, so it needs no credentials or network. Setting `LAZYS3_E2E_REAL=<profile>` (e.g. `oss`) runs the same suite against a real S3-compatible endpoint using that profile from `~/.aws/config` / `~/.aws/credentials`.
 
-## Regenerating the demo GIF
+## Regenerating the demo assets
 
-The demo is recorded against a seeded in-memory S3 server (`cmd/demosrv`, listens on `127.0.0.1:19093`) by `docs/demo/record.py`, which drives the TUI in a pty (100x30) and writes an asciinema v2 cast:
+The README GIF and screenshots are recorded against a seeded in-memory S3
+server (`cmd/demosrv`, `127.0.0.1:19093`), so no credentials or network are
+needed. [`docs/demo/record.py`](demo/record.py) drives the TUI in a pty and
+renders the frames itself with pyte + Pillow — no ffmpeg/agg required.
 
 ```sh
+# 1. demo server (sample buckets: documents, backups, static-site)
 go run ./cmd/demosrv &
-python3 docs/demo/record.py                        # writes /tmp/demo.cast
-agg --font-size 14 /tmp/demo.cast docs/demo.gif    # render with agg
+
+# 2. throwaway HOME with a 'demo' profile pointing at it
+./docs/demo/build-demo-home.sh          # -> .cache/demo/home
+go build -o .cache/demo/lazys3 .
+
+# 3. assets (scenes: tour, start, preview, metadata, search, transfers, help, dual)
+python3 docs/demo/record.py gif  --scene tour    --out docs/demo/demo.gif
+python3 docs/demo/record.py shot --scene preview --out docs/demo/shots/preview.png
+
+# light theme stills
+LAZYS3_DEMO_HOME=.cache/demo/light \
+  python3 docs/demo/record.py shot --light --scene preview --out docs/demo/shots/light.png
 ```
 
-The script expects the lazys3 binary at `/tmp/lazys3-demo` and a prepared demo `$HOME` under `/tmp/demo-home` (with a workspace directory and an `~/.aws` profile pointing at the demo server) — see the header of [`docs/demo/record.py`](demo/record.py) for the full setup.
+Requirements: `pip install pyte pillow`.
+
+Two recording gotchas worth knowing:
+
+- The recorder strips `NO_COLOR`/`TERM=dumb` from the child environment.
+  Inheriting a shell that sets `NO_COLOR=1` makes lipgloss drop every colour
+  and the output is silently monochrome.
+- GIF frames are quantized with dithering **off** before saving. Pillow's
+  default dithering sprays near-equal colours across flat UI areas, which
+  LZW cannot compress — the same GIF grows from ~650 KiB to ~4 MiB.

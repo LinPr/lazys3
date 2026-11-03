@@ -22,6 +22,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/LinPr/lazys3/internal/tui/components/style"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -225,11 +226,11 @@ func DefaultBindings() []Group {
 
 var boxStyle = lipgloss.NewStyle().
 	Border(lipgloss.RoundedBorder()).
-	BorderForeground(lipgloss.Color("#3b82f6")).
+	BorderForeground(style.InfoFg).
 	Padding(1, 2)
 
 var dimStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("#aaaaaa"))
+	Foreground(style.DimFg)
 
 // lineCount is how many content lines the overlay renders in total: the
 // title plus, per group, a blank separator, the group name and its
@@ -258,16 +259,16 @@ func (m Model) contentHeight() int {
 func (m Model) renderLines() []string {
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#e39f00")).
-		Background(lipgloss.Color("#444745")).
+		Foreground(style.WarningFg).
+		Background(style.StatusBarBg).
 		Padding(0, 1)
 	groupStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#3b82f6"))
+		Foreground(style.InfoFg)
 	keyStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#dddddd"))
+		Foreground(style.TextFg)
 	descStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#aaaaaa"))
+		Foreground(style.DimFg)
 
 	lines := []string{titleStyle.Render("lazys3 — keybindings")}
 	for _, g := range m.groups {
@@ -379,7 +380,7 @@ func (m Model) View() string {
 	if w <= 0 || h <= 0 {
 		return box
 	}
-	dimBg := lipgloss.NewStyle().Background(lipgloss.Color("#1a1a1a"))
+	dimBg := lipgloss.NewStyle().Background(style.StatusBarBg)
 	rendered := lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, box,
 		lipgloss.WithWhitespaceStyle(dimBg),
 	)

@@ -2,52 +2,132 @@
 
 English | [简体中文](README.zh-CN.md)
 
-A terminal UI for browsing and operating S3-compatible object storage (AWS S3, Aliyun OSS, MinIO, ...) like a file manager — dual-pane transfers, presigned URLs, and versioning, all from the keyboard.
+**An S3 browser for your terminal.** Navigate buckets and prefixes like a
+file manager, preview objects without downloading them, move files between
+local and remote with one keystroke, and start straight inside a bucket even
+when your credentials are not allowed to list them.
 
-![demo](docs/demo.gif)
+![lazys3 demo](docs/demo/demo.gif)
+
+```
+go install github.com/LinPr/lazys3@latest
+```
+
+Works with AWS S3, Aliyun OSS, Huawei OBS, Tencent COS, MinIO, Ceph — anything
+speaking the S3 protocol.
+
+---
+
+## At a glance
+
+<table>
+<tr>
+<td width="50%">
+
+**Open a bucket/prefix directly**
+
+Per-profile start locations skip `ListBuckets` entirely, so bucket-scoped
+credentials work.
+
+</td>
+<td width="50%">
+
+**Preview before download**
+
+`p` streams the first 256 KiB of any text file into a scrollable overlay.
+
+</td>
+</tr>
+<tr>
+<td><img src="docs/demo/shots/start.png" alt="Per-profile start location"></td>
+<td><img src="docs/demo/shots/preview.png" alt="Content preview overlay"></td>
+</tr>
+<tr>
+<td>
+
+**Full object metadata**
+
+`m` shows Content-Type, ETag, storage class, SSE, checksums, user metadata.
+
+</td>
+<td>
+
+**Find anything in the bucket**
+
+`F` searches recursively and jumps to the first match.
+
+</td>
+</tr>
+<tr>
+<td><img src="docs/demo/shots/metadata.png" alt="Metadata overlay"></td>
+<td><img src="docs/demo/shots/search.png" alt="Recursive search"></td>
+</tr>
+<tr>
+<td>
+
+**Live transfers**
+
+`t` lists every upload, download and sync with progress; `x` cancels.
+
+</td>
+<td>
+
+**Local ⇄ remote, side by side**
+
+`l` opens the dual-pane view; `tab` switches panes, and file ops follow focus.
+
+</td>
+</tr>
+<tr>
+<td><img src="docs/demo/shots/transfers.png" alt="Transfers overlay"></td>
+<td><img src="docs/demo/shots/dual.png" alt="Dual-pane mode"></td>
+</tr>
+</table>
 
 ## Features
 
 **Browse**
 
-- Multi-profile: picks up every profile from `~/.aws/config` / `~/.aws/credentials`, including custom `endpoint_url` for S3-compatible services (MinIO, Aliyun OSS, Tencent COS, Ceph, ...)
-- Path-style addressing is detected automatically: AWS S3 and Aliyun OSS use virtual-host style, every other custom endpoint gets path-style (OSS rejects path-style, so it is special-cased)
-- Navigate profiles → buckets → objects with `enter`/`backspace` (or arrow keys); prefixes behave like directories
-- Content preview (`p`): floating overlay with the first 256 KiB of the highlighted file (ranged fetch for S3 objects), scrollable, with binary- and empty-file detection
-- Metadata overlay (`m`): every populated field of the highlighted item — full `HeadObject` for S3 objects (content type, ETag, storage class, user metadata, SSE, checksums, ...), region/versioning for buckets, path/permissions/owner/timestamps/symlink target for local entries, config paths for profiles
-- Filter (`/`), sort by name/size/time (`o`/`O`), and multi-select (`space`, `a`) in every list
+- Multi-profile: reads every profile from `~/.aws/config` / `~/.aws/credentials`, honouring a custom `endpoint_url` per profile
+- Path-style addressing is chosen automatically: AWS S3 and Aliyun OSS use virtual-host style, other custom endpoints get path-style (OSS rejects path-style, so it is special-cased)
+- Navigate profiles → buckets → objects with `enter` / `backspace`; prefixes behave like directories
+- Content preview (`p`): the first 256 KiB of the highlighted file in a floating, scrollable overlay, with binary and empty-file detection
+- Metadata overlay (`m`): every populated field of the highlighted item — full `HeadObject` for objects, region/versioning for buckets, path/permissions/owner/timestamps/symlink target for local entries, config paths for profiles
+- Filter (`/`), sort by name/size/time (`o` / `O`) and multi-select (`space`, `a`) in every list
+- Recursive search (`F`): find a key anywhere in the bucket and jump to its prefix
 
 **Transfer**
 
-- Dual-pane mode (`l`): local filesystem on one side, S3 on the other; `tab` switches focus and file ops act on the focused pane
-- Upload (`u` in the local pane) and download (`d` in the remote pane), including recursive folder transfers through the sync engine
-- Directory sync (`s`): local ⇄ S3 and S3 ⇄ S3; dual-pane prefills both sides
+- Dual-pane mode (`l`): local filesystem on one side, S3 on the other; `tab` switches focus and file operations act on the focused pane
+- Upload (`u`) and download (`d`), including recursive folder transfers through the sync engine
+- Directory sync (`s`): local ⇄ S3 and S3 ⇄ S3, prefilled in dual-pane mode
 - Live transfers overlay (`t`) with progress bars, newest first; `x` cancels a running transfer
-- Go to path (`g`): jump straight to an `s3://bucket/prefix/` or a local directory without walking the tree
-- Start location: open a bucket/prefix at launch, either per profile in `config.yaml` or with `lazys3 s3://bucket/prefix/` — no `ListBuckets` call, so bucket-scoped credentials work
+- Go to path (`g`): jump straight to an `s3://bucket/prefix/` or a local directory
 
 **Manage**
 
 - Create buckets and local directories (`B`), rename (`r`), copy (`c`)
-- Recursive delete (`D`): S3 folders (prefixes) and local directories, plus empty-bucket deletion — always behind a confirm modal
-- Recursive search (`F`): find a key anywhere in the bucket and jump to its prefix
-- Multipart cleanup (`P`): list and abort interrupted uploads — their parts never appear in a listing but are billed as storage
-- Floating confirm modals with Yes/No buttons: `tab`/arrows move the highlight, `enter` executes it (Yes is the default), `y`/`n`/`esc` always work
+- Recursive delete (`D`) for prefixes and local directories, plus empty-bucket deletion — always behind a confirm modal
+- Multipart cleanup (`P`): list and abort interrupted uploads, whose parts never appear in a listing but are billed as storage
+- Confirm modals with Yes/No buttons: `tab`/arrows move the highlight, `enter` confirms, `y`/`n`/`esc` always work
 
 **Versioning & sharing**
 
-- Presigned share URLs (`Y`) with configurable expiry (1s..168h, default 1h), copied straight to the clipboard
-- Presigned upload URLs (`U`): hand someone a PUT link so they can write into the current prefix without any credentials
-- Object versions (`v` in the object list): download, restore, or delete a specific version
-- Toggle bucket versioning (`v` in the bucket list): Enabled ⇄ Suspended
+- Presigned download URLs (`Y`) with configurable expiry (1s..168h, default 1h), copied straight to the clipboard
+- Presigned upload URLs (`U`): hand someone a PUT link so they can write into the current prefix without credentials
+- Object versions (`v` in the object list): download, restore or delete a specific version
+- Bucket versioning toggle (`v` in the bucket list): Enabled ⇄ Suspended
 - Yank (`y`): the `s3://` URI of a bucket/object, or the absolute path of a local entry
 
-**UX**
+**Startup & configuration**
 
-- Scrollable in-app help overlay (`?`) — the same keymap as the tables below
-- Single-line status bar: active profile, focused pane, selection count, running/done/failed transfer tallies, last info/error
-- Per-profile endpoint/region overrides in `config.yaml`, so a profile can be retargeted without editing `~/.aws/config`
-- Themeable colors and optional Nerd Font file icons via `config.yaml`
+- Start inside a bucket/prefix at launch — per profile in `config.yaml`, or with `lazys3 s3://bucket/prefix/` — with no `ListBuckets` call at all
+- Per-profile `endpoint` / `region` overrides, so a profile can be retargeted without editing `~/.aws/config`
+- Warm dark and light themes (`theme.mode`), plus per-colour overrides and optional Nerd Font icons
+
+<p align="center">
+  <img src="docs/demo/shots/light.png" alt="Light theme" width="70%">
+</p>
 - A broken config file never crashes the TUI — invalid values fall back to defaults with a log line
 
 ## Keybindings
@@ -190,11 +270,13 @@ lazys3 reads `$XDG_CONFIG_HOME/lazys3/config.yaml` (default `~/.config/lazys3/co
 # All keys are optional; the commented values show the built-in defaults.
 
 theme:
-  # Colors are hex strings: "#rgb" or "#rrggbb".
-  # focused_border: "#20e71c"    # border of the focused pane
-  # unfocused_border: "#555555"  # border of the unfocused pane (dual-pane mode)
-  # title_fg: "#e39f00"          # status-bar profile chip foreground
-  # title_bg: "#444745"          # status-bar profile chip background
+  # mode: "dark"                   # built-in palette: dark | light
+  # Colors are hex strings: "#rgb" or "#rrggbb"; the keys below override
+  # individual entries of the chosen palette.
+  # focused_border: "#D9A441"    # border of the focused pane
+  # unfocused_border: "#4A4238"  # border of the unfocused pane (dual-pane mode)
+  # title_fg: "#1C1917"          # list/status chip foreground
+  # title_bg: "#D9A441"          # list/status chip background
   # status_error_fg: "#ffffff"   # status-bar error text
   # selected_fg: ""              # highlighted list row foreground
 

@@ -33,3 +33,6 @@ go.work.sum
 
 lazys3 
 debug.log
+
+# Python bytecode from the demo recorder
+__pycache__/

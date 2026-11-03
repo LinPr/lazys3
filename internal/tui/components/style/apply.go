@@ -12,12 +12,19 @@ import (
 // construction time, so Apply must run before the components are built.
 var SelectedItemFg color.Color
 
-// Apply mutates the package-level style vars from the loaded (already
-// validated) theme. It must run once at startup, BEFORE any component is
-// constructed: delegates and custom item styles copy from these vars at
-// construction, while the pane Views re-read the border colors on every
-// render.
-func Apply(t config.Theme) {
+// Apply installs the built-in palette named by theme, then applies any
+// per-colour overrides from config.yaml on top. It must run once at
+// startup, BEFORE any component is constructed: delegates and custom item
+// styles copy from these vars at construction, while the pane Views re-read
+// the border colours on every render.
+func Apply(theme string, t config.Theme) {
+	switch theme {
+	case "light":
+		ApplyLight()
+	default:
+		ApplyDark()
+	}
+
 	if c := t.FocusedBorder; c != "" {
 		FocusedBorderColor = lipgloss.Color(c)
 		ProfileListStyle = ProfileListStyle.BorderForeground(FocusedBorderColor)

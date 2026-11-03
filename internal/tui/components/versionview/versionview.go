@@ -24,6 +24,7 @@ import (
 	s3store "github.com/LinPr/lazys3/internal/storage/s3"
 	"github.com/LinPr/lazys3/internal/strutil"
 	"github.com/LinPr/lazys3/internal/tui/components/objectlist"
+	"github.com/LinPr/lazys3/internal/tui/components/style"
 )
 
 // ActionKind discriminates the per-row actions the overlay can request.
@@ -224,7 +225,7 @@ func (m *Model) clamp() {
 
 var boxStyle = lipgloss.NewStyle().
 	Border(lipgloss.RoundedBorder()).
-	BorderForeground(lipgloss.Color("#3b82f6")).
+	BorderForeground(style.InfoFg).
 	Padding(0, 1)
 
 // pageSize is how many version rows fit in the box: total height minus the
@@ -338,14 +339,14 @@ func (m Model) View() string {
 
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#e39f00")).
-		Background(lipgloss.Color("#444745")).
+		Foreground(style.WarningFg).
+		Background(style.StatusBarBg).
 		Padding(0, 1)
 	headerStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#3b82f6"))
+		Foreground(style.InfoFg)
 	dimStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#aaaaaa"))
+		Foreground(style.DimFg)
 
 	inner := m.innerWidth()
 	page := m.pageSize()

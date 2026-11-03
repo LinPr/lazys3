@@ -2,12 +2,29 @@ package bucketlist
 
 import (
 	"errors"
+	"image/color"
+	"regexp"
 	"strings"
 	"testing"
 
+	"charm.land/lipgloss/v2"
+
+	"github.com/LinPr/lazys3/internal/tui/components/style"
 	"github.com/LinPr/lazys3/internal/tui/types"
 	"github.com/aws/smithy-go"
 )
+
+// sgrFor renders a colour through lipgloss and extracts its SGR sequence,
+// so these tests follow the palette instead of pinning one hex value.
+func sgrFor(t *testing.T, c color.Color) string {
+	t.Helper()
+	out := lipgloss.NewStyle().Foreground(c).Render("X")
+	m := regexp.MustCompile(`\x1b\[([0-9;]*)m`).FindStringSubmatch(out)
+	if m == nil {
+		t.Fatalf("no SGR in %q", out)
+	}
+	return m[1]
+}
 
 // TestCursorRowHighlighted pins the cursor-row highlight: the highlighted
 // bucket carries the picker highlight foreground (style.CursorHighlightFg,
@@ -16,7 +33,7 @@ import (
 // ("#f3ec38ff"), which lipgloss.Color rejects — the row silently rendered
 // with no highlight at all.
 func TestCursorRowHighlighted(t *testing.T) {
-	const cursorSGR = "38;2;243;236;56"
+	cursorSGR := sgrFor(t, style.CursorHighlightFg)
 	m := NewModel()
 	m.SetSize(60, 20)
 	m.SetBuckets([]Bucket{NewBucket("alpha"), NewBucket("beta")})

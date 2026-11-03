@@ -2,53 +2,130 @@
 
 [English](README.md) | 简体中文
 
-一个像文件管理器一样浏览和操作 S3 兼容对象存储（AWS S3、阿里云 OSS、MinIO 等）的终端 UI —— 双栏传输、预签名 URL、版本管理，全程键盘操作。
+**终端里的 S3 浏览器。** 像文件管理器一样浏览 bucket 和前缀，不下载就能预览对象，
+一键在本地和远端之间搬运文件——并且即使凭据没有列举 bucket 的权限，也能直接进到指定目录。
 
-![demo](docs/demo.gif)
+![lazys3 演示](docs/demo/demo.gif)
+
+```
+go install github.com/LinPr/lazys3@latest
+```
+
+支持 AWS S3、阿里云 OSS、华为云 OBS、腾讯云 COS、MinIO、Ceph 等任何
+兼容 S3 协议的服务。
+
+---
+
+## 一览
+
+<table>
+<tr>
+<td width="50%">
+
+**直达指定 bucket / 前缀**
+
+按 profile 配置启动位置，完全跳过 `ListBuckets`，只有 bucket 级权限的凭据也能用。
+
+</td>
+<td width="50%">
+
+**先看再下载**
+
+`p` 流式拉取文件前 256 KiB，在可滚动的浮层里预览。
+
+</td>
+</tr>
+<tr>
+<td><img src="docs/demo/shots/start.png" alt="按 profile 直达启动位置"></td>
+<td><img src="docs/demo/shots/preview.png" alt="内容预览浮层"></td>
+</tr>
+<tr>
+<td>
+
+**完整的对象元数据**
+
+`m` 展示 Content-Type、ETag、存储类型、SSE、校验和、用户元数据等。
+
+</td>
+<td>
+
+**在整个 bucket 里找东西**
+
+`F` 递归搜索并直接跳到命中的前缀。
+
+</td>
+</tr>
+<tr>
+<td><img src="docs/demo/shots/metadata.png" alt="元数据浮层"></td>
+<td><img src="docs/demo/shots/search.png" alt="递归搜索"></td>
+</tr>
+<tr>
+<td>
+
+**实时传输**
+
+`t` 列出所有上传、下载与同步的进度；`x` 取消。
+
+</td>
+<td>
+
+**本地 ⇄ 远端 并排**
+
+`l` 打开双栏视图，`tab` 切换面板，文件操作跟随焦点。
+
+</td>
+</tr>
+<tr>
+<td><img src="docs/demo/shots/transfers.png" alt="传输浮层"></td>
+<td><img src="docs/demo/shots/dual.png" alt="双栏模式"></td>
+</tr>
+</table>
 
 ## 功能特性
 
 **浏览**
 
-- 多 Profile：自动读取 `~/.aws/config` / `~/.aws/credentials` 中的全部 profile，支持自定义 `endpoint_url` 接入 S3 兼容服务（MinIO、阿里云 OSS、腾讯云 COS、Ceph 等）
-- 自动选择寻址方式：AWS S3 与阿里云 OSS 使用 virtual-host 风格，其余自定义 endpoint 一律使用 path-style（OSS 不接受 path-style，因此做了特判）
-- 使用 `enter`/`backspace`（或方向键）在 profile → bucket → 对象之间逐级导航，前缀（prefix）表现得像目录
-- 内容预览（`p`）：浮动浮层显示高亮文件的前 256 KiB（S3 对象按 Range 拉取），可滚动，自动识别二进制文件和空文件
-- 元数据浮层（`m`）：显示高亮条目的全部非空字段 —— S3 对象为完整 `HeadObject`（Content-Type、ETag、存储类型、用户元数据、SSE、校验和等），bucket 为地域/版本控制状态，本地条目为路径/权限/属主/时间戳/软链接目标，profile 为配置文件路径
-- 每个列表都支持过滤（`/`）、按名称/大小/时间排序（`o`/`O`）和多选（`space`、`a`）
+- 多 Profile：读取 `~/.aws/config` / `~/.aws/credentials` 中的全部 profile，支持每个 profile 自定义 `endpoint_url`
+- 自动选择寻址方式：AWS S3 与阿里云 OSS 使用 virtual-host 风格，其余自定义 endpoint 使用 path-style（OSS 不接受 path-style，因此做了特判）
+- 使用 `enter` / `backspace` 在 profile → bucket → 对象之间导航，前缀表现得像目录
+- 内容预览（`p`）：浮动并可滚动的浮层，显示高亮文件的前 256 KiB，自动识别二进制与空文件
+- 元数据浮层（`m`）：显示高亮条目的全部非空字段 —— 对象为完整 `HeadObject`，bucket 为地域/版本控制状态，本地条目为路径/权限/属主/时间戳，profile 为配置文件路径
+- 每个列表都支持过滤（`/`）、按名称/大小/时间排序（`o` / `O`）和多选（`space`、`a`）
+- 递归搜索（`F`）：在整个 bucket 内查找 key，并跳到它所在的前缀
 
 **传输**
 
-- 双栏模式（`l`）：一侧本地文件系统、一侧 S3；`tab` 切换焦点，文件操作作用于当前聚焦的一栏
-- 上传（本地栏 `u`）与下载（远端栏 `d`），文件夹通过同步引擎递归传输
-- 目录同步（`s`）：本地 ⇄ S3、S3 ⇄ S3；双栏模式下自动预填两侧路径
+- 双栏模式（`l`）：一侧本地文件系统、一侧 S3；`tab` 切换焦点，文件操作作用于聚焦的一栏
+- 上传（`u`）与下载（`d`），文件夹通过同步引擎递归传输
+- 目录同步（`s`）：本地 ⇄ S3、S3 ⇄ S3，双栏模式下自动预填两侧
 - 实时传输浮层（`t`），带进度条、最新在前；`x` 取消正在运行的传输
-- 路径直达（`g`）：直接跳转到 `s3://bucket/prefix/` 或本地目录，无需逐级导航
-- 启动位置：可在 `config.yaml` 中按 profile 配置启动 bucket/prefix，或用 `lazys3 s3://bucket/prefix/` 直接进入 —— 不会调用 `ListBuckets`，因此只有 bucket 级权限的凭据也能使用
+- 路径直达（`g`）：直接跳到 `s3://bucket/prefix/` 或本地目录
 
 **管理**
 
 - 创建 bucket 与本地目录（`B`）、重命名（`r`）、拷贝（`c`）
-- 递归删除（`D`）：S3 文件夹（前缀）与本地目录，以及删除空 bucket —— 全部有确认弹窗把关
-- 递归搜索（`F`）：在整个 bucket 内查找 key，并直接跳到它所在的前缀
+- 递归删除（`D`）前缀与本地目录，以及删除空 bucket —— 全部有确认弹窗把关
 - 分片清理（`P`）：列出并中止中断的多段上传 —— 这些分片在列表里看不到，但仍在计费
-- 浮动确认弹窗带 Yes/No 按钮：`tab`/方向键切换高亮，`enter` 执行高亮按钮（默认 Yes），`y`/`n`/`esc` 随时可用
+- 确认弹窗带 Yes/No 按钮：`tab`/方向键切换高亮，`enter` 确认，`y`/`n`/`esc` 随时可用
 
 **版本与分享**
 
-- 预签名分享 URL（`Y`），有效期可配（1s..168h，默认 1h），生成后直接复制到剪贴板
+- 预签名下载 URL（`Y`），有效期可配（1s..168h，默认 1h），生成后复制到剪贴板
 - 预签名上传 URL（`U`）：把 PUT 链接给别人，无需任何凭据即可写入当前前缀
 - 对象版本（对象列表按 `v`）：下载、恢复或删除指定版本
 - 切换 bucket 版本控制（bucket 列表按 `v`）：Enabled ⇄ Suspended
 - 复制路径（`y`）：bucket/对象的 `s3://` URI，或本地条目的绝对路径
 
-**体验**
+**启动与配置**
 
-- 应用内可滚动的帮助浮层（`?`），内容与下方按键表一致
-- 单行状态栏：当前 profile、聚焦面板、选中数量、传输进度（传输进行时显示聚合进度条和各方向批次计数，空闲时显示累计 `↑`/`↓` 完成数与 `✗` 失败数）、最近一条提示（如 `o`/`O` 切换后的排序状态）或错误
-- 在 `config.yaml` 中按 profile 覆盖 endpoint/region，无需改动 `~/.aws/config`
-- 通过 `config.yaml` 自定义主题颜色，可选 Nerd Font 文件图标
-- 配置文件损坏不会导致崩溃 —— 非法值自动回退到默认值并记录日志
+- 启动即进入指定 bucket / 前缀 —— 按 profile 写在 `config.yaml`，或用 `lazys3 s3://bucket/prefix/`；完全不调用 `ListBuckets`
+- 按 profile 覆盖 `endpoint` / `region`，无需改动 `~/.aws/config`
+- 暖色深色主题与浅色主题（`theme.mode`），支持逐项配色覆盖与可选的 Nerd Font 图标
+
+<p align="center">
+  <img src="docs/demo/shots/light.png" alt="浅色主题" width="70%">
+</p>
+- 配置文件损坏不会导致崩溃 —— 非法值回退到默认值并记录日志
 
 ## 按键说明
 
@@ -190,11 +267,13 @@ lazys3 读取 `$XDG_CONFIG_HOME/lazys3/config.yaml`（默认 `~/.config/lazys3/c
 # All keys are optional; the commented values show the built-in defaults.
 
 theme:
-  # Colors are hex strings: "#rgb" or "#rrggbb".
-  # focused_border: "#20e71c"    # border of the focused pane
-  # unfocused_border: "#555555"  # border of the unfocused pane (dual-pane mode)
-  # title_fg: "#e39f00"          # status-bar profile chip foreground
-  # title_bg: "#444745"          # status-bar profile chip background
+  # mode: "dark"                   # built-in palette: dark | light
+  # Colors are hex strings: "#rgb" or "#rrggbb"; the keys below override
+  # individual entries of the chosen palette.
+  # focused_border: "#D9A441"    # border of the focused pane
+  # unfocused_border: "#4A4238"  # border of the unfocused pane (dual-pane mode)
+  # title_fg: "#1C1917"          # list/status chip foreground
+  # title_bg: "#D9A441"          # list/status chip background
   # status_error_fg: "#ffffff"   # status-bar error text
   # selected_fg: ""              # highlighted list row foreground
 
@@ -207,9 +286,10 @@ local:
   # start_dir: ""                # local pane start directory, "~" ok (default: process cwd)
 
 profiles:
-  # 按 profile 配置启动位置。选中该 profile 后，lazys3 直接打开这个
-  # bucket/prefix，不调用 ListBuckets —— 只有 bucket 级权限的凭据通常
-  # 无法列出全部 bucket。prefix 可选，始终按目录前缀处理（"logs" 会列出 "logs/"）。
+  # Per-profile startup location. When the profile is selected, lazys3 opens
+  # this bucket/prefix directly instead of calling ListBuckets, which
+  # bucket-scoped credentials often deny. The prefix is optional and always
+  # treated as a directory prefix ("logs" lists "logs/").
   # oss:
   #   bucket: "my-bucket"
   #   prefix: "some/prefix/"

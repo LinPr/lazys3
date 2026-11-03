@@ -1,16 +1,33 @@
 package objectlist
 
 import (
+	"image/color"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
+
+	"charm.land/lipgloss/v2"
 
 	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/LinPr/lazys3/internal/tui/components/style"
 	"github.com/LinPr/lazys3/internal/tui/types"
 )
+
+// sgrFor renders a colour through lipgloss and extracts its SGR sequence,
+// so these tests follow the palette instead of pinning one hex value.
+func sgrFor(t *testing.T, c color.Color) string {
+	t.Helper()
+	out := lipgloss.NewStyle().Foreground(c).Render("X")
+	m := regexp.MustCompile(`\x1b\[([0-9;]*)m`).FindStringSubmatch(out)
+	if m == nil {
+		t.Fatalf("no SGR in %q", out)
+	}
+	return m[1]
+}
 
 // press feeds a single key press into the model and drains any resulting
 // filter-refresh commands so VisibleItems reflects the new state.
@@ -269,7 +286,7 @@ func TestSelectedRowMarkAndHighlight(t *testing.T) {
 		t.Errorf("unmarked row should render a blank 2-cell marker, got %q", out)
 	}
 	// style.SelectedMarkFg (#04B575) as an SGR truecolor foreground.
-	const markSGR = "38;2;4;181;117"
+	markSGR := sgrFor(t, style.SelectedMarkFg)
 	if !strings.Contains(marked.String(), markSGR) {
 		t.Errorf("marked row should carry the mark foreground %s:\n%q", markSGR, marked.String())
 	}

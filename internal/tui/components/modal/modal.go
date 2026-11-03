@@ -245,8 +245,8 @@ func (m Model) boxWidth() int {
 }
 
 var (
-	buttonBlurStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#888888"))
-	dimStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("#888888"))
+	buttonBlurStyle = lipgloss.NewStyle().Foreground(style.MutedFg)
+	dimStyle        = lipgloss.NewStyle().Foreground(style.MutedFg)
 )
 
 // buttonFocusStyle highlights the confirm button enter would execute; it
@@ -281,8 +281,8 @@ func (m Model) View() string {
 
 	header := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#e39f00")).
-		Background(lipgloss.Color("#444745")).
+		Foreground(style.WarningFg).
+		Background(style.StatusBarBg).
 		Padding(0, 1).
 		Render(m.title)
 
@@ -314,7 +314,7 @@ func (m Model) View() string {
 
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#3b82f6")).
+		BorderForeground(style.InfoFg).
 		Width(width)
 
 	// Return just the bordered box: tui.go composites it centered over the

@@ -32,6 +32,7 @@ import (
 	s3store "github.com/LinPr/lazys3/internal/storage/s3"
 	"github.com/LinPr/lazys3/internal/strutil"
 	"github.com/LinPr/lazys3/internal/tui/components/preview"
+	"github.com/LinPr/lazys3/internal/tui/components/style"
 )
 
 // fetchTimeout bounds a metadata fetch so a hung endpoint cannot leave the
@@ -430,20 +431,20 @@ func profileRows(name, endpointURL, region string, configFiles []string) []Row {
 var (
 	boxStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("#3b82f6")).
+			BorderForeground(style.InfoFg).
 			Padding(0, 1)
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("#e39f00")).
-			Background(lipgloss.Color("#444745")).
+			Foreground(style.WarningFg).
+			Background(style.StatusBarBg).
 			Padding(0, 1)
 	headingStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("#3b82f6"))
+			Foreground(style.InfoFg)
 	keyStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#dddddd"))
+			Foreground(style.TextFg)
 	dimStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#aaaaaa"))
+			Foreground(style.DimFg)
 )
 
 // boxWidth is the overlay's outer width: min(80, W-6) with a floor.

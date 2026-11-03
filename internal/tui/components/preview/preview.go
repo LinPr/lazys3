@@ -29,6 +29,7 @@ import (
 
 	s3store "github.com/LinPr/lazys3/internal/storage/s3"
 	"github.com/LinPr/lazys3/internal/strutil"
+	"github.com/LinPr/lazys3/internal/tui/components/style"
 )
 
 // MaxBytes is the preview sample size: only the first 256 KiB of a file is
@@ -473,15 +474,15 @@ func cleanText(b []byte) string {
 var (
 	boxStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("#3b82f6")).
+			BorderForeground(style.InfoFg).
 			Padding(0, 1)
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("#e39f00")).
-			Background(lipgloss.Color("#444745")).
+			Foreground(style.WarningFg).
+			Background(style.StatusBarBg).
 			Padding(0, 1)
 	dimStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#aaaaaa"))
+			Foreground(style.DimFg)
 )
 
 // boxSize is the overlay's outer box: width 4/5 of terminal width, height H-4,
@@ -590,7 +591,12 @@ func (m Model) View() string {
 	inner := m.innerWidth()
 	page := m.pageSize()
 
-	lines := []string{titleStyle.Render(ansi.Truncate(m.title, inner-2, "…"))}
+	// Pad before styling: Render only paints the text it is given, so a
+	// chip styled first and padded afterwards leaves an unstyled gap and
+	// the title bar looks like two different backgrounds.
+	titleText := ansi.Truncate(m.title, inner-2, "…")
+	titleText += strings.Repeat(" ", max(inner-2-lipgloss.Width(titleText), 0))
+	lines := []string{titleStyle.Render(titleText)}
 	footer := "p/esc close"
 
 	switch {

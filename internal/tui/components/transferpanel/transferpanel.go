@@ -34,6 +34,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/LinPr/lazys3/internal/tui/components/style"
 	"github.com/LinPr/lazys3/internal/tui/types"
 )
 
@@ -819,7 +820,7 @@ func truncateLabel(s string, width int) string {
 // frame so the rendered block never exceeds the width from SetSize.
 var panelStyle = lipgloss.NewStyle().
 	Border(lipgloss.NormalBorder()).
-	BorderForeground(lipgloss.Color("#3b82f6")).
+	BorderForeground(style.InfoFg).
 	Padding(0, 1)
 
 // innerWidth returns the row budget: the outer width minus the panel's

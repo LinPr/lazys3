@@ -25,7 +25,7 @@ func saveVars(t *testing.T) {
 
 func TestApplyOverridesVars(t *testing.T) {
 	saveVars(t)
-	Apply(config.Theme{
+	Apply("dark", config.Theme{
 		FocusedBorder:   "#ff0000",
 		UnfocusedBorder: "#00ff00",
 		TitleFg:         "#111111",
@@ -68,7 +68,9 @@ func TestApplyZeroThemeKeepsDefaults(t *testing.T) {
 	saveVars(t)
 	focused, unfocused := FocusedBorderColor, UnfocusedBorderColor
 	title := TitleStyle
-	Apply(config.Theme{})
+	Apply("dark", config.Theme{})
+	// A zero theme re-installs the dark palette, so compare against the
+	// palette defaults rather than whatever was live before.
 	if FocusedBorderColor != focused || UnfocusedBorderColor != unfocused {
 		t.Error("zero theme must not change the border colors")
 	}

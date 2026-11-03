@@ -146,9 +146,9 @@ func (m Model) transferSegment() string {
 	if !style.NerdFontEnabled() {
 		up, down, fail = "^", "v", "x"
 	}
-	runStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#3b82f6"))
-	okStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#22c55e"))
-	failStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#ef4444"))
+	runStyle := lipgloss.NewStyle().Foreground(style.AccentFg)
+	okStyle := lipgloss.NewStyle().Foreground(style.SuccessFg)
+	failStyle := lipgloss.NewStyle().Foreground(style.ErrorFg)
 	var parts []string
 	if st.UpActive+st.DownActive+st.OtherActive > 0 {
 		// Per-type counts.
@@ -252,14 +252,10 @@ func (m Model) View() string {
 	// The profile chip and the error chip pick up theme overrides via the
 	// shared style vars (title_fg/title_bg, status_error_fg).
 	profileStyle := style.TitleStyle
-	paneStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#a78bfa"))
-	selStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#3b82f6"))
-	infoStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#22c55e"))
-	helpStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#777777"))
+	paneStyle := lipgloss.NewStyle().Foreground(style.WarningFg)
+	selStyle := lipgloss.NewStyle().Foreground(style.AccentFg)
+	infoStyle := lipgloss.NewStyle().Foreground(style.SuccessFg)
+	helpStyle := lipgloss.NewStyle().Foreground(style.MutedFg)
 	errStyle := style.StatusErrorStyle
 
 	const sep = "  "
@@ -276,7 +272,7 @@ func (m Model) View() string {
 	if m.loading {
 		spinFrames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 		frame := int(time.Now().UnixMilli()/120) % len(spinFrames)
-		spinStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#a78bfa"))
+		spinStyle := lipgloss.NewStyle().Foreground(style.AccentFg)
 		segs = append(segs, spinStyle.Render(spinFrames[frame]))
 	}
 	left := strings.Join(segs, sep)
@@ -310,7 +306,7 @@ func (m Model) View() string {
 	line = ansi.Truncate(line, m.width, "")
 
 	bar := lipgloss.NewStyle().
-		Background(lipgloss.Color("#222222")).
+		Background(style.StatusBarBg).
 		Width(m.width).
 		MaxHeight(1)
 	return bar.Render(line)

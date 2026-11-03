@@ -7,57 +7,14 @@ import (
 	"github.com/LinPr/lazys3/internal/tui/components/style"
 )
 
-func NewCustomItemStyles(isDark bool) (s list.DefaultItemStyles) {
-	lightDark := lipgloss.LightDark(isDark)
-
-	s.NormalTitle = lipgloss.NewStyle().
-		Foreground(lightDark(lipgloss.Color("#1a1a1a"), lipgloss.Color("#dddddd"))).
-		Padding(0, 0, 0, 2) //nolint:mnd
-		// Border(lipgloss.NormalBorder(), true, true, true, true)
-
-	s.NormalDesc = s.NormalTitle.
-		Foreground(lightDark(lipgloss.Color("#A49FA5"), lipgloss.Color("#777777")))
-
-	// Cursor-row highlight. NOTE: lipgloss.Color only parses #RGB/#RRGGBB —
-	// the previous "#f3ec38ff" (8-digit hex) silently became NoColor, which
-	// is how the cursor row lost its highlight.
-	s.SelectedTitle = lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder(), false, false, false, true).
-		BorderForeground(style.CursorHighlightFg).
-		Foreground(style.CursorHighlightFg).
-		Padding(0, 0, 0, 1)
-
-	s.SelectedDesc = s.SelectedTitle.
-		Foreground(lightDark(lipgloss.Color("#F793FF"), lipgloss.Color("#AD58B4")))
-
-	// Theme override for the highlighted row (style.Apply runs before the
-	// components are constructed).
-	if c := style.SelectedItemFg; c != nil {
-		s.SelectedTitle = s.SelectedTitle.Foreground(c).BorderForeground(c)
-	}
-
-	s.DimmedTitle = lipgloss.NewStyle().
-		Foreground(lightDark(lipgloss.Color("#A49FA5"), lipgloss.Color("#777777"))).
-		Padding(0, 0, 0, 2) //nolint:mnd
-
-	s.DimmedDesc = s.DimmedTitle.
-		Foreground(lightDark(lipgloss.Color("#C2B8C2"), lipgloss.Color("#4D4D4D")))
-
-	s.FilterMatch = lipgloss.NewStyle().Underline(true)
-
-	return s
-}
-
 const (
 	bullet   = "•"
 	ellipsis = "…"
 )
 
 func CustomStyle(isDark bool) (s list.Styles) {
-	lightDark := lipgloss.LightDark(isDark)
-
-	verySubduedColor := lightDark(lipgloss.Color("#DDDADA"), lipgloss.Color("#3C3C3C"))
-	subduedColor := lightDark(lipgloss.Color("#9B9B9B"), lipgloss.Color("#5C5C5C"))
+	verySubduedColor := style.MutedFg
+	subduedColor := style.DimFg
 
 	s.TitleBar = lipgloss.NewStyle().
 		Padding(0, 0, 1, 2) //nolint:mnd
@@ -67,30 +24,30 @@ func CustomStyle(isDark bool) (s list.Styles) {
 	s.Title = style.ListTitleStyle(true)
 
 	s.Spinner = lipgloss.NewStyle().
-		Foreground(lightDark(lipgloss.Color("#8E8E8E"), lipgloss.Color("#747373")))
+		Foreground(style.MutedFg)
 
 	prompt := lipgloss.NewStyle().
-		Foreground(lightDark(lipgloss.Color("#04B575"), lipgloss.Color("#ECFD65")))
+		Foreground(style.SuccessFg)
 	s.Filter = textinput.DefaultStyles(isDark)
-	s.Filter.Cursor.Color = lightDark(lipgloss.Color("#EE6FF8"), lipgloss.Color("#EE6FF8"))
+	s.Filter.Cursor.Color = style.AccentFg
 	s.Filter.Blurred.Prompt = prompt
 	s.Filter.Focused.Prompt = prompt
 
 	s.DefaultFilterCharacterMatch = lipgloss.NewStyle().Underline(true)
 
 	s.StatusBar = lipgloss.NewStyle().
-		Foreground(lightDark(lipgloss.Color("#A49FA5"), lipgloss.Color("#777777"))).
+		Foreground(style.DimFg).
 		Padding(0, 0, 1, 2) //nolint:mnd
 
 	s.StatusEmpty = lipgloss.NewStyle().Foreground(subduedColor)
 
 	s.StatusBarActiveFilter = lipgloss.NewStyle().
-		Foreground(lightDark(lipgloss.Color("#1a1a1a"), lipgloss.Color("#dddddd")))
+		Foreground(style.TextFg)
 
 	s.StatusBarFilterCount = lipgloss.NewStyle().Foreground(verySubduedColor)
 
 	s.NoItems = lipgloss.NewStyle().
-		Foreground(lightDark(lipgloss.Color("#909090"), lipgloss.Color("#626262")))
+		Foreground(style.MutedFg)
 
 	s.ArabicPagination = lipgloss.NewStyle().Foreground(subduedColor)
 
@@ -99,7 +56,7 @@ func CustomStyle(isDark bool) (s list.Styles) {
 	s.HelpStyle = lipgloss.NewStyle().Padding(1, 0, 0, 2) //nolint:mnd
 
 	s.ActivePaginationDot = lipgloss.NewStyle().
-		Foreground(lightDark(lipgloss.Color("#847A85"), lipgloss.Color("#979797"))).
+		Foreground(style.DimFg).
 		SetString(bullet)
 
 	s.InactivePaginationDot = lipgloss.NewStyle().

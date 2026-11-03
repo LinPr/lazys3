@@ -264,7 +264,7 @@ func clampView(cursor, offset, total, page int) (int, int) {
 
 var boxStyle = lipgloss.NewStyle().
 	Border(lipgloss.RoundedBorder()).
-	BorderForeground(lipgloss.Color("#3b82f6")).
+	BorderForeground(style.InfoFg).
 	Padding(0, 1)
 
 // pageSize is how many transfer rows fit in the box: total height minus
@@ -525,11 +525,11 @@ func headerRow(w colWidths) string {
 var (
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("#e39f00")).
-			Background(lipgloss.Color("#444745")).
+			Foreground(style.WarningFg).
+			Background(style.StatusBarBg).
 			Padding(0, 1)
 	dimStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#aaaaaa"))
+			Foreground(style.DimFg)
 )
 
 // View renders the overlay from the live rows snapshot (newest first): a

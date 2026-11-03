@@ -8,6 +8,7 @@ package tui
 import (
 	"testing"
 
+	"github.com/LinPr/lazys3/internal/config"
 	s3store "github.com/LinPr/lazys3/internal/storage/s3"
 	"github.com/LinPr/lazys3/internal/tui/components/objectlist"
 	"github.com/LinPr/lazys3/internal/tui/components/profilelist"
@@ -98,6 +99,7 @@ func toS3Option(o objectlist.Option) s3store.S3Option {
 		Endpoint:       o.EndpointURL,
 		ConfigFile:     o.ConfigFile,
 		CredentialFile: o.CredentialFile,
+		Client:         o.Client,
 	}
 }
 
@@ -112,5 +114,39 @@ func TestSyncConnParamsCarriesRegion(t *testing.T) {
 	}
 	if got := syncS3Option(conn); got.Region != "cn-hangzhou" {
 		t.Fatalf("sync S3Option.Region = %q, want cn-hangzhou", got.Region)
+	}
+}
+
+// TestS3ClientOptionsReachEveryBuilder pins that the [s3] block in
+// config.yaml actually reaches every client builder. These knobs existed on
+// S3Option but had no way to be set: a service needing ListObjectsV1 or a
+// self-signed endpoint could not be used at all.
+func TestS3ClientOptionsReachEveryBuilder(t *testing.T) {
+	m := identityModel(t)
+	m.cfg.S3 = config.S3{
+		MaxRetries:         7,
+		UseListObjectsV1:   true,
+		InsecureSkipVerify: true,
+		NoSignRequest:      true,
+	}
+	want := s3store.ClientOptions{
+		MaxRetries:       7,
+		UseListObjectsV1: true,
+		NoVerifySSL:      true,
+		NoSignRequest:    true,
+	}
+
+	cases := map[string]s3store.ClientOptions{
+		"object list": toS3Option(m.objectListOptionFromState()).Client,
+		"bucket list": func() s3store.ClientOptions {
+			o := m.bucketListOptionFromState()
+			return o.Client
+		}(),
+		"sync": syncS3Option(m.syncConnParams()).Client,
+	}
+	for name, got := range cases {
+		if got != want {
+			t.Errorf("%s client options = %+v, want %+v", name, got, want)
+		}
 	}
 }

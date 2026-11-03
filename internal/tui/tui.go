@@ -56,7 +56,10 @@ type Model struct {
 	// awsFiles are the resolved AWS shared config/credentials paths
 	// (--aws-config/--aws-credentials > env > ~/.aws default), threaded
 	// into every S3 option so ops target the same files as the listings.
-	awsFiles        config.AWSFiles
+	awsFiles config.AWSFiles
+	// cfg is the loaded lazys3 config; the [s3] block is threaded into
+	// every client the TUI builds.
+	cfg             config.Config
 	selectedProfile string
 	selectedBucket  string
 	selectedObject  string
@@ -158,6 +161,7 @@ func NewLazyS3ModelWithOptions(cfg config.Config, awsFiles config.AWSFiles, opts
 	}
 	return Model{
 		state:         state.ActiveProfileList,
+		cfg:           cfg,
 		awsFiles:      awsFiles,
 		profileList:   profilelist.NewModelWithFiles(awsFiles),
 		bucketList:    bucketlist.NewModel(),

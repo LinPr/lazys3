@@ -52,21 +52,22 @@ needed. [`docs/demo/record.py`](demo/record.py) drives the TUI in a pty and
 renders the frames itself with pyte + Pillow — no ffmpeg/agg required.
 
 ```sh
-# 1. demo server (sample buckets: documents, backups, static-site)
-go run ./cmd/demosrv &
+./docs/demo/make-assets.sh          # builds, seeds, records everything
+```
 
-# 2. throwaway HOME with a 'demo' profile pointing at it
-./docs/demo/build-demo-home.sh          # -> .cache/demo/home
-go build -o .cache/demo/lazys3 .
+That one script builds lazys3 and the demo server, prepares a throwaway
+HOME under `/tmp/lazys3-demo` (a short path keeps the dual-pane screenshot
+readable), starts the server, records the GIF and all stills, and cleans
+up. Individual scenes can be re-recorded:
 
-# 3. assets (scenes: tour, start, preview, metadata, search, transfers, help, dual)
+```sh
 python3 docs/demo/record.py gif  --scene tour    --out docs/demo/demo.gif
 python3 docs/demo/record.py shot --scene preview --out docs/demo/shots/preview.png
-
-# light theme stills
-LAZYS3_DEMO_HOME=.cache/demo/light \
-  python3 docs/demo/record.py shot --light --scene preview --out docs/demo/shots/light.png
+python3 docs/demo/record.py shot --light --scene preview --out docs/demo/shots/light.png
 ```
+
+Scenes: `tour`, `start`, `preview`, `metadata`, `search`, `transfers`,
+`help`, `dual`.
 
 Requirements: `pip install pyte pillow`.
 

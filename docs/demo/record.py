@@ -346,20 +346,23 @@ def dedupe(frames):
 
 # Scene scripts. Keys are raw text for the pty: "\x1b" is esc, "\r" enter.
 SCENES = {
+    # The hero GIF: the four things a newcomer needs to see — browsing,
+    # previewing without downloading, searching the bucket, and dual-pane.
     "tour": {
-        "title": "lazys3 — preview · metadata · transfers · help",
+        "title": "lazys3 — browse · preview · search · dual-pane",
         "startup": 3.0,
         "args": "--profile demo",
         "keys": [
-            (0.9, "j"), (0.4, "j"), (0.4, "j"),  # move onto README.md
-            (1.8, "p"),                # content preview
+            (0.8, "enter" and "\r"),   # open the notes/ prefix
+            (1.6, "\x7f"),            # back out
+            (1.2, "j"), (0.4, "j"), (0.4, "j"),  # onto README.md
+            (1.6, "p"),                # content preview
             (2.2, "\x1b"),             # close
-            (1.4, "m"),                # metadata overlay
-            (2.6, "\x1b"),
-            (1.4, "t"),                # transfers overlay
-            (2.4, "\x1b"),
-            (1.6, "?"),                # help
-            (2.6, "\x1b"),
+            (1.2, "F"), (0.9, "report"), (0.6, "\r"),  # recursive search
+            (2.4, "\x7f"),             # back up to the parent prefix
+            (1.2, "l"),                # dual-pane local ⇄ remote
+            (2.2, "\t"),               # switch focus to the local pane
+            (2.0, "\x1b"),
         ],
     },
     "start": {

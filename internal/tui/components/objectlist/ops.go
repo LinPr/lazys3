@@ -27,6 +27,7 @@ func s3OptionFromListOption(o Option) s3store.S3Option {
 		Endpoint:       o.EndpointURL,
 		ConfigFile:     o.ConfigFile,
 		CredentialFile: o.CredentialFile,
+		Client:         o.Client,
 	}
 }
 

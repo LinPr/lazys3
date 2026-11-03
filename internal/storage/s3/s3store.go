@@ -75,9 +75,6 @@ type S3Store struct {
 	// requestPayerFlag, when non-empty, is sent as RequestPayer on every
 	// request that supports it.
 	requestPayerFlag string
-	// noSuchUploadRetryCount caps the number of times Put retries an upload
-	// that failed with NoSuchUpload. Currently surfaced for Track B/C.
-	noSuchUploadRetryCount int
 }
 
 // newRetryer builds the SDK v2 retryer. It starts from retry.NewStandard
@@ -172,11 +169,11 @@ func NewS3Client(ctx context.Context, option S3Option) (*S3Store, error) {
 	if option.ConfigFile != "" {
 		optFns = append(optFns, config.WithSharedConfigFiles([]string{option.ConfigFile}))
 	}
-	if option.MaxRetries > 0 {
-		retryer := newRetryer(option.MaxRetries)
+	if option.Client.MaxRetries > 0 {
+		retryer := newRetryer(option.Client.MaxRetries)
 		optFns = append(optFns, config.WithRetryer(func() aws.Retryer { return retryer }))
 	}
-	if option.NoVerifySSL {
+	if option.Client.NoVerifySSL {
 		transport := http.DefaultTransport.(*http.Transport).Clone()
 		if transport.TLSClientConfig == nil {
 			transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
@@ -205,7 +202,7 @@ func NewS3Client(ctx context.Context, option S3Option) (*S3Store, error) {
 		if endpointURL != sentinelURL {
 			o.BaseEndpoint = aws.String(endpointURL.String())
 		}
-		if option.NoSignRequest {
+		if option.Client.NoSignRequest {
 			o.Credentials = nil // anonymous credentials
 		}
 	})
@@ -218,9 +215,8 @@ func NewS3Client(ctx context.Context, option S3Option) (*S3Store, error) {
 		tm:                     tm,
 		presigner:              presigner,
 		dryRun:                 option.DryRun,
-		useListObjectsV1:       option.UseListObjectsV1,
+		useListObjectsV1:       option.Client.UseListObjectsV1,
 		requestPayerFlag:       option.RequestPayer,
-		noSuchUploadRetryCount: option.NoSuchUploadRetryCount,
 	}, nil
 }
 

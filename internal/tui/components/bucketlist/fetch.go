@@ -24,6 +24,7 @@ type Bucket struct {
 	pathStyle      bool
 	configFile     string
 	credentialFile string
+	clientOpts     s3store.ClientOptions
 }
 
 func (b Bucket) Name() string   { return b.name }
@@ -46,6 +47,7 @@ func (b Bucket) GetPreviewRequest() *preview.PreviewRequest {
 		Region:         b.region,
 		ConfigFile:     b.configFile,
 		CredentialFile: b.credentialFile,
+		Client:         b.clientOpts,
 	}
 }
 
@@ -63,6 +65,8 @@ type Option struct {
 	// the SDK defaults.
 	ConfigFile     string
 	CredentialFile string
+	// Client carries endpoint-compatibility knobs from the lazys3 config.
+	Client s3store.ClientOptions
 }
 
 type FetchBucketListResultMsg struct {
@@ -86,6 +90,7 @@ func FetchBucketListCmd(o *Option) tea.Cmd {
 			Endpoint:       o.EndpointURL,
 			ConfigFile:     o.ConfigFile,
 			CredentialFile: o.CredentialFile,
+			Client:         o.Client,
 		}
 
 		cli, err := s3store.NewS3Client(ctx, opt)
@@ -122,6 +127,7 @@ func listBuckets(ctx context.Context, cli *s3store.S3Store, o *Option) ([]Bucket
 			region:         o.Region,
 			configFile:     o.ConfigFile,
 			credentialFile: o.CredentialFile,
+			clientOpts:     o.Client,
 		}
 		bucketList = append(bucketList, b)
 	}

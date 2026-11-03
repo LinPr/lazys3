@@ -47,6 +47,24 @@ type UI struct {
 	TransferPanelHeight int `yaml:"transfer_panel_height"`
 }
 
+// S3 carries client-level knobs that some S3-compatible services need. The
+// zero value is exactly the previous behaviour: signed requests, TLS
+// verification on, ListObjectsV2, SDK default retries.
+type S3 struct {
+	// MaxRetries caps SDK retry attempts. Zero keeps the SDK default (3).
+	MaxRetries int `yaml:"max_retries"`
+	// UseListObjectsV1 selects the legacy ListObjects API. Some appliances
+	// (and a few private clouds) never implemented ListObjectsV2, and
+	// without this knob their buckets look empty.
+	UseListObjectsV1 bool `yaml:"use_list_objects_v1"`
+	// InsecureSkipVerify disables TLS certificate verification, for
+	// endpoints with self-signed certificates (internal MinIO). It is a
+	// real security downgrade, so it logs a warning at startup.
+	InsecureSkipVerify bool `yaml:"insecure_skip_verify"`
+	// NoSignRequest sends anonymous requests, for browsing public buckets.
+	NoSignRequest bool `yaml:"no_sign_request"`
+}
+
 // Local configures the dual-pane local filesystem browser.
 type Local struct {
 	StartDir string `yaml:"start_dir"` // overrides the process cwd when set
@@ -75,6 +93,7 @@ type Config struct {
 	Theme    Theme              `yaml:"theme"`
 	UI       UI                 `yaml:"ui"`
 	Local    Local              `yaml:"local"`
+	S3       S3                 `yaml:"s3"`
 	Profiles map[string]Profile `yaml:"profiles"`
 }
 
@@ -231,6 +250,17 @@ func (c *Config) sanitize() {
 		}
 	}
 
+	if c.S3.MaxRetries < 0 {
+		log.Printf("config: [s3] max_retries: %d is negative, using the SDK default", c.S3.MaxRetries)
+		c.S3.MaxRetries = 0
+	}
+	if c.S3.InsecureSkipVerify {
+		log.Printf("config: [s3] insecure_skip_verify is ON: TLS certificates are not verified")
+	}
+	if c.S3.NoSignRequest {
+		log.Printf("config: [s3] no_sign_request is ON: requests are sent anonymously (read-only public buckets)")
+	}
+
 	// Profile start locations: a bucket is required; a prefix is optional
 	// and always normalized to a "/"-terminated listing prefix. The bucket
 	// is normalised as forgivingly as the prefix: users write the same
@@ -318,6 +348,13 @@ ui:
 
 local:
   # start_dir: ""                # local pane start directory, "~" ok (default: process cwd)
+
+s3:
+  # Client-level knobs, mostly for self-hosted / older S3-compatible services.
+  # max_retries: 3               # SDK retry attempts (default: SDK's 3)
+  # use_list_objects_v1: false   # legacy ListObjects, for services without V2
+  # insecure_skip_verify: false  # skip TLS verification (self-signed endpoint)
+  # no_sign_request: false       # anonymous requests (public buckets, read-only)
 
 profiles:
   # Per-profile startup location. When the profile is selected, lazys3 opens

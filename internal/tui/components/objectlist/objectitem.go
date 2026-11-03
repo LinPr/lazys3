@@ -40,6 +40,7 @@ type Object struct {
 	pathStyle      bool
 	configFile     string
 	credentialFile string
+	clientOpts     s3store.ClientOptions
 }
 
 // Name returns the object's key (full path for files, prefix for directories).
@@ -76,6 +77,9 @@ type Option struct {
 	// the SDK defaults.
 	ConfigFile     string
 	CredentialFile string
+	// Client carries endpoint-compatibility knobs (ListObjectsV1, TLS
+	// verification, anonymous requests, retries) from the lazys3 config.
+	Client s3store.ClientOptions
 }
 
 func (o Object) Title() string { return o.name }
@@ -110,6 +114,7 @@ func (o Object) GetPreviewRequest() *preview.PreviewRequest {
 		Region:         o.region,
 		ConfigFile:     o.configFile,
 		CredentialFile: o.credentialFile,
+		Client:         o.clientOpts,
 	}
 }
 
@@ -138,6 +143,7 @@ func FetchObjectListCmd(o Option) tea.Cmd {
 			Endpoint:       o.EndpointURL,
 			ConfigFile:     o.ConfigFile,
 			CredentialFile: o.CredentialFile,
+			Client:         o.Client,
 		}
 
 		cli, err := s3store.NewS3Client(ctx, opt)
@@ -195,6 +201,7 @@ func listObjects(ctx context.Context, cli *s3store.S3Store, bucket, key string, 
 			pathStyle:      o.PathStyle,
 			configFile:     o.ConfigFile,
 			credentialFile: o.CredentialFile,
+			clientOpts:     o.Client,
 		})
 	}
 	for _, obj := range objs {
@@ -215,6 +222,7 @@ func listObjects(ctx context.Context, cli *s3store.S3Store, bucket, key string, 
 			pathStyle:      o.PathStyle,
 			configFile:     o.ConfigFile,
 			credentialFile: o.CredentialFile,
+			clientOpts:     o.Client,
 		}
 		if obj.LastModified != nil {
 			o.modTime = *obj.LastModified

@@ -9,6 +9,9 @@ when your credentials are not allowed to list them.
 
 ![lazys3 demo](docs/demo/demo.gif)
 
+*Browsing, previewing without downloading, searching a whole bucket, and
+dual-pane local ⇄ remote — recorded from a real session.*
+
 ```
 go install github.com/LinPr/lazys3@latest
 ```
@@ -288,6 +291,13 @@ ui:
 local:
   # start_dir: ""                # local pane start directory, "~" ok (default: process cwd)
 
+s3:
+  # Client-level knobs, mostly for self-hosted / older S3-compatible services.
+  # max_retries: 3               # SDK retry attempts (default: SDK's 3)
+  # use_list_objects_v1: false   # legacy ListObjects, for services without V2
+  # insecure_skip_verify: false  # skip TLS verification (self-signed endpoint)
+  # no_sign_request: false       # anonymous requests (public buckets, read-only)
+
 profiles:
   # Per-profile startup location. When the profile is selected, lazys3 opens
   # this bucket/prefix directly instead of calling ListBuckets, which
@@ -305,6 +315,7 @@ Flags:
 - `--config <path>` — read the lazys3 config from an explicit file instead of the default location (`lazys3 --config ./lazys3.yaml`); the file must exist, be readable and parse as YAML.
 - `--aws-config <path>` — AWS shared config file (`lazys3 --aws-config ~/work/aws-config`); precedence: flag > `AWS_CONFIG_FILE` > `~/.aws/config`.
 - `--aws-credentials <path>` — AWS shared credentials file (`lazys3 --aws-credentials ~/work/aws-credentials`); precedence: flag > `AWS_SHARED_CREDENTIALS_FILE` > `~/.aws/credentials`.
+- `s3.max_retries` / `use_list_objects_v1` / `insecure_skip_verify` / `no_sign_request` — client-level knobs for self-hosted or older S3 services. `use_list_objects_v1` is what makes appliances that never implemented ListObjectsV2 listable at all; `insecure_skip_verify` turns TLS verification off (self-signed endpoints only — it logs a warning).
 - `--profile <name>` — select this profile as soon as the AWS shared config is read, skipping the profile picker (`lazys3 --profile oss`).
 - `lazys3 [s3://bucket/prefix/]` — optional positional start location. It overrides the selected profile's configured start location for this run; the prefix is normalized to a directory prefix.
 

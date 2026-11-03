@@ -1,5 +1,19 @@
 package s3store
 
+// ClientOptions are the service-level knobs that a custom endpoint may
+// need. It lives alone so the TUI can carry one copy through its Option
+// structs instead of repeating four fields at every layer.
+type ClientOptions struct {
+	// MaxRetries caps SDK retry attempts (0 keeps the SDK default).
+	MaxRetries int
+	// UseListObjectsV1 selects the legacy ListObjects API.
+	UseListObjectsV1 bool
+	// NoVerifySSL disables TLS certificate verification.
+	NoVerifySSL bool
+	// NoSignRequest sends anonymous requests.
+	NoSignRequest bool
+}
+
 // S3Option stores configuration for the S3 storage backend. Field status is
 // annotated so callers know what is wired up vs. what is still a TODO.
 type S3Option struct {
@@ -71,14 +85,6 @@ type S3Option struct {
 	// Status: implemented.
 	MaxRetries int
 
-	// NoSuchUploadRetryCount caps the number of times Put retries an upload
-	// that failed with NoSuchUpload. A non-positive value disables the
-	// retry path. Currently stored on the struct for downstream use by
-	// Track B/C; not yet wired into Put.
-	//
-	// Status: implemented.
-	NoSuchUploadRetryCount int
-
 	// CredentialFile overrides the shared credentials file path the SDK
 	// loads (config.WithSharedCredentialsFiles), replacing the default
 	// ~/.aws/credentials source. Profile (when set) is still honoured via
@@ -86,6 +92,12 @@ type S3Option struct {
 	//
 	// Status: implemented.
 	CredentialFile string
+
+	// Client groups the endpoint-compatibility knobs. The zero value keeps
+	// the SDK defaults.
+	//
+	// Status: implemented.
+	Client ClientOptions
 
 	// ConfigFile overrides the shared config file path the SDK loads
 	// (config.WithSharedConfigFiles), replacing the default ~/.aws/config

@@ -33,6 +33,11 @@ cat > "$HOME_DIR/.config/lazys3/config.yaml" <<'EOF'
 ui:
   default_sort: "name"
 
+local:
+  # Point the local pane at the demo workspace so the dual-pane scene shows
+  # a small, readable directory instead of the recorder's cwd.
+  start_dir: "~/workspace"
+
 profiles:
   demo:
     bucket: "documents"

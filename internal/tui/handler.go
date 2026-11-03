@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	s3store "github.com/LinPr/lazys3/internal/storage/s3"
 	"github.com/LinPr/lazys3/internal/tui/components/bucketlist"
 	"github.com/LinPr/lazys3/internal/tui/components/objectlist"
 	"github.com/LinPr/lazys3/internal/tui/keybinding"
@@ -71,6 +72,20 @@ func (m *Model) objectListOption(s3uri string) objectlist.Option {
 		PathStyle:      shouldUsePathStyle(endpointURL),
 		ConfigFile:     m.awsFiles.ConfigFile,
 		CredentialFile: m.awsFiles.CredentialsFile,
+		Client:         m.s3ClientOptions(),
+	}
+}
+
+// s3ClientOptions is the [s3] block from config.yaml, carried into every
+// client the TUI builds (listing, preview, metadata, versions, sync) so a
+// service that needs ListObjectsV1 or an unverified self-signed endpoint
+// works everywhere instead of only where someone remembered to pass it.
+func (m *Model) s3ClientOptions() s3store.ClientOptions {
+	return s3store.ClientOptions{
+		MaxRetries:       m.cfg.S3.MaxRetries,
+		UseListObjectsV1: m.cfg.S3.UseListObjectsV1,
+		NoVerifySSL:      m.cfg.S3.InsecureSkipVerify,
+		NoSignRequest:    m.cfg.S3.NoSignRequest,
 	}
 }
 
@@ -99,6 +114,7 @@ func (m *Model) bucketListOptionFromState() bucketlist.Option {
 		PathStyle:      shouldUsePathStyle(endpointURL),
 		ConfigFile:     m.awsFiles.ConfigFile,
 		CredentialFile: m.awsFiles.CredentialsFile,
+		Client:         m.s3ClientOptions(),
 	}
 }
 

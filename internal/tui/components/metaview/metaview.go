@@ -202,6 +202,7 @@ func newClient(ctx context.Context, r preview.PreviewRequest) (*s3.Client, error
 		Region:         r.Region,
 		ConfigFile:     r.ConfigFile,
 		CredentialFile: r.CredentialFile,
+		Client:         r.Client,
 	})
 	if err != nil {
 		return nil, err

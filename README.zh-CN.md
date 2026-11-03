@@ -7,6 +7,8 @@
 
 ![lazys3 演示](docs/demo/demo.gif)
 
+*浏览、免下载预览、全 bucket 搜索、本地 ⇄ 远端双栏 —— 由真实会话录制。*
+
 ```
 go install github.com/LinPr/lazys3@latest
 ```
@@ -285,6 +287,13 @@ ui:
 local:
   # start_dir: ""                # local pane start directory, "~" ok (default: process cwd)
 
+s3:
+  # Client-level knobs, mostly for self-hosted / older S3-compatible services.
+  # max_retries: 3               # SDK retry attempts (default: SDK's 3)
+  # use_list_objects_v1: false   # legacy ListObjects, for services without V2
+  # insecure_skip_verify: false  # skip TLS verification (self-signed endpoint)
+  # no_sign_request: false       # anonymous requests (public buckets, read-only)
+
 profiles:
   # Per-profile startup location. When the profile is selected, lazys3 opens
   # this bucket/prefix directly instead of calling ListBuckets, which
@@ -302,6 +311,7 @@ profiles:
 - `--config <path>` —— 使用指定的 lazys3 配置文件替代默认位置（`lazys3 --config ./lazys3.yaml`）；文件必须存在、可读且是合法 YAML。
 - `--aws-config <path>` —— AWS 共享 config 文件（`lazys3 --aws-config ~/work/aws-config`）；优先级：flag > `AWS_CONFIG_FILE` > `~/.aws/config`。
 - `--aws-credentials <path>` —— AWS 共享 credentials 文件（`lazys3 --aws-credentials ~/work/aws-credentials`）；优先级：flag > `AWS_SHARED_CREDENTIALS_FILE` > `~/.aws/credentials`。
+- `s3.max_retries` / `use_list_objects_v1` / `insecure_skip_verify` / `no_sign_request` —— 面向自建或较老 S3 服务的客户端开关。`use_list_objects_v1` 能让从未实现 ListObjectsV2 的设备正常列目录；`insecure_skip_verify` 关闭 TLS 校验（仅用于自签名端点，启动时会打印警告）。
 - `--profile <name>` —— 读取完 AWS 共享配置后自动选中该 profile，跳过 profile 选择界面（`lazys3 --profile oss`）。
 - `lazys3 [s3://bucket/prefix/]` —— 可选的位置参数，作为本次启动的起始位置；它会覆盖所选 profile 的配置，prefix 会被规范化为目录前缀。
 

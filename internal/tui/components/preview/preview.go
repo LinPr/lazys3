@@ -75,6 +75,8 @@ type PreviewRequest struct {
 	// the SDK defaults.
 	ConfigFile     string
 	CredentialFile string
+	// Client carries endpoint-compatibility knobs from the lazys3 config.
+	Client s3store.ClientOptions
 
 	Bucket string
 	Key    string
@@ -194,6 +196,7 @@ func (m *Model) ShowRemote(req *PreviewRequest) tea.Cmd {
 			Region:         r.Region,
 			ConfigFile:     r.ConfigFile,
 			CredentialFile: r.CredentialFile,
+			Client:         r.Client,
 		})
 		if err != nil {
 			return ContentMsg{Seq: seq, Err: err}
@@ -287,6 +290,7 @@ func (m *Model) showRemoteImage(req *PreviewRequest) tea.Cmd {
 			Region:         r.Region,
 			ConfigFile:     r.ConfigFile,
 			CredentialFile: r.CredentialFile,
+			Client:         r.Client,
 		})
 		if err != nil {
 			return ContentMsg{Seq: seq, Err: err}

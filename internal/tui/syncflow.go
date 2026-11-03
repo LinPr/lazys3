@@ -34,6 +34,7 @@ func (m *Model) syncConnParams() connParams {
 	// wrong region makes S3-compatible services reject the request
 	// (SignatureDoesNotMatch) even though their endpoints are custom.
 	conn.region = m.selectedRegion
+	conn.client = m.s3ClientOptions()
 	return conn
 }
 
@@ -59,6 +60,7 @@ type connParams struct {
 	region         string
 	configFile     string
 	credentialFile string
+	client         s3store.ClientOptions
 }
 
 // syncS3Option converts the resolved connection facts into the SDK
@@ -73,6 +75,7 @@ func syncS3Option(conn connParams) s3store.S3Option {
 		Endpoint:       conn.endpointURL,
 		ConfigFile:     conn.configFile,
 		CredentialFile: conn.credentialFile,
+		Client:         conn.client,
 	}
 }
 

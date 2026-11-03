@@ -24,13 +24,27 @@ type Options struct {
 	// AWS_SHARED_CREDENTIALS_FILE and the ~/.aws defaults.
 	AWSConfigPath      string
 	AWSCredentialsPath string
+	// Profile is the --profile value: when set, the TUI selects that
+	// profile as soon as the AWS shared config has been read instead of
+	// waiting for the user to pick one.
+	Profile string
+	// Start is the optional positional s3://bucket/prefix argument; it
+	// overrides the selected profile's configured start location.
+	Start string
+	// startLoc is the parsed Start value (filled by Complete).
+	startLoc *tui.StartLocation
 }
 
 func NewRootCmd() *cobra.Command {
 	o := &Options{}
 	cmd := &cobra.Command{
-		Use:     "lazys3",
-		Short:   "A tui tool to operate S3 asserts.",
+		Use:   "lazys3 [s3://bucket/prefix/]",
+		Short: "A tui tool to operate S3 assets.",
+		Long: `A terminal UI for S3-compatible object storage.
+
+The optional positional argument opens a bucket/prefix directly at startup,
+without calling ListBuckets. It is useful for bucket-scoped credentials that
+cannot list buckets; --profile also skips the interactive profile picker.`,
 		Version: Version,
 		Args:    cobra.MaximumNArgs(1),
 
@@ -56,11 +70,26 @@ func NewRootCmd() *cobra.Command {
 	cmd.PersistentFlags().StringVar(&o.ConfigPath, "config", "", "lazys3 config file (default $XDG_CONFIG_HOME/lazys3/config.yaml)")
 	cmd.PersistentFlags().StringVar(&o.AWSConfigPath, "aws-config", "", "AWS shared config file (default $AWS_CONFIG_FILE, then ~/.aws/config)")
 	cmd.PersistentFlags().StringVar(&o.AWSCredentialsPath, "aws-credentials", "", "AWS shared credentials file (default $AWS_SHARED_CREDENTIALS_FILE, then ~/.aws/credentials)")
+	cmd.PersistentFlags().StringVar(&o.Profile, "profile", "", "AWS profile to select on startup (default: interactive picker)")
 
 	return cmd
 }
 
+// Complete parses the optional positional start location. An invalid URI
+// is a hard error before the TUI starts, so a typo cannot silently open
+// the profile picker as if nothing had been passed.
 func (o *Options) Complete(args []string) error {
+	if len(args) == 1 {
+		o.Start = args[0]
+	}
+	if o.Start == "" {
+		return nil
+	}
+	loc, err := tui.ParseStartLocation(o.Start)
+	if err != nil {
+		return err
+	}
+	o.startLoc = &loc
 	return nil
 }
 
@@ -108,7 +137,10 @@ func (o *Options) Run() error {
 	// every S3 client.
 	awsFiles := config.ResolveAWSFiles(o.AWSConfigPath, o.AWSCredentialsPath)
 
-	model := tui.NewLazyS3ModelWithConfig(cfg, awsFiles)
+	model := tui.NewLazyS3ModelWithOptions(cfg, awsFiles, tui.Options{
+		Profile: o.Profile,
+		Start:   o.startLoc,
+	})
 	// Alt screen, focus reporting and cell-motion mouse moved from
 	// tea.NewProgram options to tea.View fields in bubbletea v2.0.8;
 	// they are set in the model's View (internal/tui/tui.go).

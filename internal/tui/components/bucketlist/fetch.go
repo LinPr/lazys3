@@ -8,7 +8,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	s3store "github.com/LinPr/lazys3/internal/storage/s3"
-	"github.com/LinPr/lazys3/internal/storage/uri"
 	"github.com/LinPr/lazys3/internal/tui/components/preview"
 )
 
@@ -55,7 +54,6 @@ func (b Bucket) GetPreviewRequest() *preview.PreviewRequest {
 // non-AWS services (Aliyun OSS, Huawei OBS, Tencent COS, MinIO) connect
 // through the correct endpoint with path-style addressing.
 type Option struct {
-	S3Uri       string
 	Profile     string
 	Region      string
 	PathStyle   bool
@@ -95,20 +93,8 @@ func FetchBucketListCmd(o *Option) tea.Cmd {
 			return FetchBucketListResultMsg{Err: err}
 		}
 
-		if o.S3Uri == "" {
-			buckets, err := listBuckets(ctx, cli, o)
-			return FetchBucketListResultMsg{Buckets: buckets, Err: err}
-		}
-
-		parsedURI, err := uri.ParseS3Uri(o.S3Uri)
-		if err != nil {
-			return FetchBucketListResultMsg{Err: err}
-		}
-		if parsedURI.GetBucket() == "" {
-			buckets, err := listBuckets(ctx, cli, o)
-			return FetchBucketListResultMsg{Buckets: buckets, Err: err}
-		}
-		return nil
+		buckets, err := listBuckets(ctx, cli, o)
+		return FetchBucketListResultMsg{Buckets: buckets, Err: err}
 	}
 }
 

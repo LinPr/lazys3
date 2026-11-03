@@ -30,7 +30,7 @@ func TestE2E_RecursiveDeletePrefix(t *testing.T) {
 		t.Fatalf("NewS3Client: %v", err)
 	}
 
-	n, err := store.DeletePrefix(context.Background(), bucket, "a/")
+	n, err := store.DeletePrefix(context.Background(), bucket, "a/", nil)
 	if err != nil {
 		t.Fatalf("DeletePrefix(a/): %v", err)
 	}
@@ -48,7 +48,7 @@ func TestE2E_RecursiveDeletePrefix(t *testing.T) {
 	}
 
 	// A prefix with no keys is a no-op.
-	n, err = store.DeletePrefix(context.Background(), bucket, "nothing/")
+	n, err = store.DeletePrefix(context.Background(), bucket, "nothing/", nil)
 	if err != nil {
 		t.Fatalf("DeletePrefix(nothing/): %v", err)
 	}
@@ -57,7 +57,7 @@ func TestE2E_RecursiveDeletePrefix(t *testing.T) {
 	}
 
 	// A non-"/"-terminated prefix is rejected up front (the scoping guard).
-	if _, err := store.DeletePrefix(context.Background(), bucket, "a2"); err == nil {
+	if _, err := store.DeletePrefix(context.Background(), bucket, "a2", nil); err == nil {
 		t.Errorf("DeletePrefix(a2) succeeded, want an error for a prefix without a trailing slash")
 	}
 	if !objectExists(t, client, bucket, "a2/3") {

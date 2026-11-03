@@ -24,6 +24,7 @@ A terminal UI for browsing and operating S3-compatible object storage (AWS S3, A
 - Directory sync (`s`): local ⇄ S3 and S3 ⇄ S3; dual-pane prefills both sides
 - Live transfers overlay (`t`) with progress bars, newest first; `x` cancels a running transfer
 - Go to path (`g`): jump straight to an `s3://bucket/prefix/` or a local directory without walking the tree
+- Start location: open a bucket/prefix at launch, either per profile in `config.yaml` or with `lazys3 s3://bucket/prefix/` — no `ListBuckets` call, so bucket-scoped credentials work
 
 **Manage**
 
@@ -167,6 +168,12 @@ lazys3
 
 Pick a profile, press `enter` to list buckets, and press `?` any time for the full keymap.
 
+If your credentials are bucket-scoped and `s3:ListAllMyBuckets` is denied, skip the bucket picker entirely:
+
+```sh
+lazys3 --profile oss s3://my-bucket/logs/      # profile + location from the CLI
+```
+
 ## Configuration
 
 lazys3 reads `$XDG_CONFIG_HOME/lazys3/config.yaml` (default `~/.config/lazys3/config.yaml`). On first run a commented template is written so the knobs are discoverable. Every key is optional; invalid values fall back to the built-in defaults with a log line.
@@ -191,6 +198,15 @@ ui:
 
 local:
   # start_dir: ""                # local pane start directory, "~" ok (default: process cwd)
+
+profiles:
+  # Per-profile startup location. When the profile is selected, lazys3 opens
+  # this bucket/prefix directly instead of calling ListBuckets, which
+  # bucket-scoped credentials often deny. The prefix is optional and always
+  # treated as a directory prefix ("logs" lists "logs/").
+  # oss:
+  #   bucket: "my-bucket"
+  #   prefix: "some/prefix/"
 ```
 
 Flags:
@@ -198,11 +214,15 @@ Flags:
 - `--config <path>` — read the lazys3 config from an explicit file instead of the default location (`lazys3 --config ./lazys3.yaml`); the file must exist, be readable and parse as YAML.
 - `--aws-config <path>` — AWS shared config file (`lazys3 --aws-config ~/work/aws-config`); precedence: flag > `AWS_CONFIG_FILE` > `~/.aws/config`.
 - `--aws-credentials <path>` — AWS shared credentials file (`lazys3 --aws-credentials ~/work/aws-credentials`); precedence: flag > `AWS_SHARED_CREDENTIALS_FILE` > `~/.aws/credentials`.
+- `--profile <name>` — select this profile as soon as the AWS shared config is read, skipping the profile picker (`lazys3 --profile oss`).
+- `lazys3 [s3://bucket/prefix/]` — optional positional start location. It overrides the selected profile's configured start location for this run; the prefix is normalized to a directory prefix.
 
 Notes:
 
 - Older versions used `config.toml`; it is no longer read — rename it to `config.yaml` and convert the content to YAML syntax (a reminder is printed on stderr, and no template overwrites it).
 - `local.start_dir` accepts `~` and relative paths (resolved against the launch directory); it must be an existing directory or it is ignored.
+- A profile start location or positional URI opens the object list without calling `ListBuckets`. The bucket list is fetched the first time you back out to it, so an access-denied error (if any) appears only when you actually open that list.
+- `--profile` must name a profile present in the resolved AWS shared config; otherwise the profile picker stays open and the status bar reports the error.
 - `ui.transfer_panel_height` from older versions is deprecated and ignored — the bottom transfer panel was replaced by the full-screen transfers overlay (`t`). Old config files still load without error.
 
 ## License

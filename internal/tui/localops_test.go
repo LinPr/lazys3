@@ -313,7 +313,7 @@ func TestLocalRenameRefusesOverwrite(t *testing.T) {
 	m = updateModel(t, m, keyPress('r'))
 	m = typeInModal(t, m, "b.txt")
 	nm, cmd := m.Update(enterPress())
-	m = nm.(Model)
+	_ = nm
 	var done *localFSDoneMsg
 	for _, msg := range drainAll(cmd) {
 		if mm, ok := msg.(localFSDoneMsg); ok {
@@ -340,7 +340,7 @@ func TestLocalMkdirRejectsEscape(t *testing.T) {
 	m = updateModel(t, m, keyPress('B'))
 	m = typeInModal(t, m, "x/../../escaped")
 	nm, cmd := m.Update(enterPress())
-	m = nm.(Model)
+	_ = nm
 	foundErr := false
 	for _, msg := range drainAll(cmd) {
 		if em, ok := msg.(types.ErrMsg); ok && strings.Contains(em.Err.Error(), "escapes") {

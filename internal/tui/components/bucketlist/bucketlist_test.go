@@ -1,8 +1,12 @@
 package bucketlist
 
 import (
+	"errors"
 	"strings"
 	"testing"
+
+	"github.com/LinPr/lazys3/internal/tui/types"
+	"github.com/aws/smithy-go"
 )
 
 // TestCursorRowHighlighted pins the cursor-row highlight: the highlighted
@@ -84,5 +88,35 @@ func TestSetBucketsRestoresCursorByName(t *testing.T) {
 	m.SetBuckets([]Bucket{NewBucket("alpha"), NewBucket("beta"), NewBucket("beta2"), NewBucket("gamma")})
 	if b := m.GetSelectedBucket(); b == nil || b.Name() != "gamma" {
 		t.Fatalf("selected after refresh = %v, want gamma (restore by name, not index)", b)
+	}
+}
+
+// TestFetchErrorAccessDeniedHintsStartLocation pins the issue-#2 failure
+// mode: a denied ListBuckets (bucket-scoped credentials) explains the two
+// ways to skip it instead of surfacing a bare AccessDenied.
+func TestFetchErrorAccessDeniedHintsStartLocation(t *testing.T) {
+	m := NewModel()
+	denied := &smithy.GenericAPIError{Code: "AccessDenied", Message: "Access Denied"}
+	m, cmd := m.Update(FetchBucketListResultMsg{Err: denied})
+	if !m.Fetched() || m.Loading() {
+		t.Fatal("an errored fetch should still mark the list fetched and clear loading")
+	}
+	if b := m.GetSelectedBucket(); b != nil {
+		t.Fatal("an errored fetch must clear the listing")
+	}
+	var got string
+	if em, ok := cmd().(types.ErrMsg); ok {
+		got = em.Err.Error()
+	}
+	for _, want := range []string{"list buckets", "access denied", "config.yaml", "'g'"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("error %q should mention %q", got, want)
+		}
+	}
+
+	// Non-authorization errors keep their plain wording.
+	_, cmd = m.Update(FetchBucketListResultMsg{Err: errors.New("connection refused")})
+	if em, ok := cmd().(types.ErrMsg); ok && strings.Contains(em.Err.Error(), "'g'") {
+		t.Errorf("non-auth error should not carry the jump hint: %v", em.Err)
 	}
 }

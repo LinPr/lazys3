@@ -66,42 +66,44 @@ const statusBarHeight = 1
 // (download/upload/delete/copy/rename) so they can construct a fresh S3
 // client targeting the same endpoint/profile/path-style as the listing.
 func (m *Model) objectListOptionFromState() objectlist.Option {
-	var endpointURL string
-	var pathStyle bool
-	var region string
-	if p := m.profileList.GetSelectedProfile(); p != nil {
-		endpointURL = p.EndpointURL
-		pathStyle = shouldUsePathStyle(endpointURL)
-		// region is left empty here; the objectlist.Option carries it
-		// from the bucketlist flow, but we don't currently thread it.
-		// NewS3Client falls back to us-east-1 when empty.
-		region = ""
-	}
-	s3uri := fmt.Sprintf("s3://%s/%s", m.selectedBucket, m.selectedObject)
+	return m.objectListOption(fmt.Sprintf("s3://%s/%s", m.selectedBucket, m.selectedObject))
+}
+
+// objectListOption builds an objectlist.Option for an arbitrary s3:// URI
+// on the ACTIVE profile's connection settings. Every navigation and file
+// op funnels through it, so endpoint, path-style, region and the shared
+// file paths can never drift between a listing and the op acting on it.
+func (m *Model) objectListOption(s3uri string) objectlist.Option {
+	endpointURL := m.selectedEndpoint()
 	return objectlist.Option{
 		S3Uri:          s3uri,
 		Profile:        m.selectedProfile,
+		Region:         m.selectedRegion,
 		EndpointURL:    endpointURL,
-		PathStyle:      pathStyle,
-		Region:         region,
+		PathStyle:      shouldUsePathStyle(endpointURL),
 		ConfigFile:     m.awsFiles.ConfigFile,
 		CredentialFile: m.awsFiles.CredentialsFile,
 	}
 }
 
+// selectedEndpoint returns the highlighted profile's custom endpoint_url
+// ("" for AWS S3).
+func (m *Model) selectedEndpoint() string {
+	if p := m.profileList.GetSelectedProfile(); p != nil {
+		return p.EndpointURL
+	}
+	return ""
+}
+
 // bucketListOptionFromState rebuilds the bucketlist.Option the active list
 // would use. Used by make-bucket/delete-bucket ops.
 func (m *Model) bucketListOptionFromState() bucketlist.Option {
-	var endpointURL string
-	var pathStyle bool
-	if p := m.profileList.GetSelectedProfile(); p != nil {
-		endpointURL = p.EndpointURL
-		pathStyle = shouldUsePathStyle(endpointURL)
-	}
+	endpointURL := m.selectedEndpoint()
 	return bucketlist.Option{
 		Profile:        m.selectedProfile,
+		Region:         m.selectedRegion,
 		EndpointURL:    endpointURL,
-		PathStyle:      pathStyle,
+		PathStyle:      shouldUsePathStyle(endpointURL),
 		ConfigFile:     m.awsFiles.ConfigFile,
 		CredentialFile: m.awsFiles.CredentialsFile,
 	}
@@ -1167,30 +1169,35 @@ func (m *Model) initComponentsSize(msg tea.WindowSizeMsg) {
 	m.metaView.SetSize(m.width, m.height)
 }
 
-func (m *Model) handleProfileSelect() tea.Cmd {
-	if selectedItem := m.profileList.GetSelectedProfile(); selectedItem != nil {
-		selectedProfile := selectedItem.Title()
-		m.selectedProfile = selectedProfile
-		// Plumb the profile's endpoint_url into the bucket list Option so
-		// non-AWS services (Aliyun OSS, Huawei OBS, ...) actually connect
-		// through the right endpoint. Path-style is forced for any
-		// non-Amazonaws endpoint because OSS/OBS/COS/MinIO require it.
-		endpointURL := selectedItem.EndpointURL
-		pathStyle := shouldUsePathStyle(endpointURL)
-		// 获取对应的 buckets
-		opt := &bucketlist.Option{
-			Profile:        selectedProfile,
-			EndpointURL:    endpointURL,
-			PathStyle:      pathStyle,
-			ConfigFile:     m.awsFiles.ConfigFile,
-			CredentialFile: m.awsFiles.CredentialsFile,
-		}
-		m.bucketList.SetOption(opt)
-		m.bucketList.SetLoading(true)
-		return bucketlist.FetchBucketListCmd(opt)
+// handleProfileSelect selects the highlighted profile and starts its
+// navigation. The returned bool reports whether the in-memory start
+// location (config or CLI) applied, in which case the model is already at
+// ActiveObjectList and the caller must not switch to the bucket list.
+func (m *Model) handleProfileSelect() (tea.Cmd, bool) {
+	selectedItem := m.profileList.GetSelectedProfile()
+	if selectedItem == nil {
+		return nil, false
+	}
+	selectedProfile := selectedItem.Title()
+	m.selectedProfile = selectedProfile
+	m.selectedRegion = selectedItem.Region()
+	// Plumb the profile's endpoint_url into the bucket list Option so
+	// non-AWS services (Aliyun OSS, Huawei OBS, ...) actually connect
+	// through the right endpoint. Path-style is forced for any
+	// non-Amazonaws endpoint because OSS/OBS/COS/MinIO require it.
+	opt := m.bucketListOptionFromState()
+	m.bucketList.SetOption(&opt)
+
+	// A configured (or CLI) start location opens the object list directly:
+	// no ListBuckets call is made, so bucket-scoped credentials work. The
+	// bucket list is fetched lazily if the user backs out to it.
+	if loc, ok := m.startLocationFor(selectedProfile); ok {
+		m.openStartLocation(loc)
+		return m.objectlist.Fetch(m.objectListOptionFromState()), true
 	}
 
-	return nil
+	m.bucketList.SetLoading(true)
+	return bucketlist.FetchBucketListCmd(&opt), false
 }
 
 func (m *Model) handleBucketSelect() tea.Cmd {
@@ -1208,24 +1215,7 @@ func (m *Model) handleBucketSelect() tea.Cmd {
 		m.objectlist.RestorePosition(selectedBucket, "")
 
 		s3uri := fmt.Sprintf("s3://%s", selectedBucket)
-
-		// Plumb endpoint/path-style from the active profile into the
-		// object list Option so object operations target the same
-		// endpoint as bucket listing.
-		var endpointURL string
-		var pathStyle bool
-		if p := m.profileList.GetSelectedProfile(); p != nil {
-			endpointURL = p.EndpointURL
-			pathStyle = shouldUsePathStyle(endpointURL)
-		}
-		opt := objectlist.Option{
-			S3Uri:          s3uri,
-			Profile:        m.selectedProfile,
-			EndpointURL:    endpointURL,
-			PathStyle:      pathStyle,
-			ConfigFile:     m.awsFiles.ConfigFile,
-			CredentialFile: m.awsFiles.CredentialsFile,
-		}
+		opt := m.objectListOption(s3uri)
 
 		m.objectlist.SetTitle(s3uri)
 		cmds = append(cmds, m.objectlist.Fetch(opt))
@@ -1252,25 +1242,10 @@ func (m *Model) handleObjectSelect() tea.Cmd {
 		m.selectedObject = selectedObject
 		m.objectlist.RestorePosition(m.selectedBucket, selectedObject)
 
-		// 可以在这里处理选中的 bucket
 		s3uri := fmt.Sprintf("s3://%s/%s", m.selectedBucket, m.selectedObject)
-		var endpointURL string
-		var pathStyle bool
-		if p := m.profileList.GetSelectedProfile(); p != nil {
-			endpointURL = p.EndpointURL
-			pathStyle = shouldUsePathStyle(endpointURL)
-		}
-		opt := objectlist.Option{
-			S3Uri:          s3uri,
-			Profile:        m.selectedProfile,
-			EndpointURL:    endpointURL,
-			PathStyle:      pathStyle,
-			ConfigFile:     m.awsFiles.ConfigFile,
-			CredentialFile: m.awsFiles.CredentialsFile,
-		}
+		opt := m.objectListOption(s3uri)
 
 		m.objectlist.SetTitle(s3uri)
-		log.Println("----xx--- handleObjectSelect s3uri:", s3uri)
 		cmds = append(cmds, m.objectlist.Fetch(opt))
 	}
 
@@ -1316,11 +1291,12 @@ func (m *Model) handleForward(_ tea.Msg) tea.Cmd {
 
 	switch m.state {
 	case state.ActiveProfileList:
-		cmd := m.handleProfileSelect()
+		cmd, jumped := m.handleProfileSelect()
 		cmds = append(cmds, cmd)
 
-		// switch to bucket list if a profile is selected
-		if m.profileList.GetSelectedProfile() != nil {
+		// Normally a profile opens the bucket list; a configured/CLI start
+		// location already switched the model to the object list.
+		if !jumped && m.profileList.GetSelectedProfile() != nil {
 			m.state = state.ActiveBucketList
 		}
 
@@ -1371,6 +1347,13 @@ func (m *Model) handleBackward() tea.Cmd {
 		if cmd == nil {
 			m.objectlist.RememberPosition(m.selectedBucket, "")
 			m.state = state.ActiveBucketList
+			// A profile with a configured start location never listed
+			// buckets. Fetch them now that the user actually opened the
+			// bucket list; a restricted account then sees the (expected)
+			// access-denied error only here, not at every startup.
+			if lazy := m.ensureBucketListLoaded(); lazy != nil {
+				cmds = append(cmds, lazy)
+			}
 		} else {
 			cmds = append(cmds, cmd)
 		}

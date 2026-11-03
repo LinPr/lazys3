@@ -142,6 +142,19 @@ func (m Model) GetSelectedProfile() *Profile {
 	return nil
 }
 
+// SelectByName moves the cursor to the profile with the given name,
+// returning false when no such profile is listed. It is used by the
+// --profile startup flag once the shared config has been read.
+func (m *Model) SelectByName(name string) bool {
+	for i, item := range m.profileList.VisibleItems() {
+		if p, ok := item.(Profile); ok && p.name == name {
+			m.profileList.Select(i)
+			return true
+		}
+	}
+	return false
+}
+
 // SetSize sets the component's outer dimensions. The wrapped list gets the
 // inner size (outer minus the border frame) so rows never overflow the box.
 // The title is re-fit to the new width so it never wraps at narrow widths.

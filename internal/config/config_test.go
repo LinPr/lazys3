@@ -3,9 +3,16 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
+
+// zeroConfig reports whether cfg equals the zero Config. Config carries a
+// map (profiles), so it is not comparable with ==.
+func zeroConfig(cfg Config) bool {
+	return reflect.DeepEqual(cfg, Config{})
+}
 
 func TestLoadValid(t *testing.T) {
 	dir := t.TempDir()
@@ -69,7 +76,7 @@ func TestMissingDefaultWritesTemplateAndReturnsZero(t *testing.T) {
 	if warn != "" {
 		t.Errorf("no warning expected, got %q", warn)
 	}
-	if cfg != (Config{}) {
+	if !zeroConfig(cfg) {
 		t.Errorf("missing file should return zero config, got %+v", cfg)
 	}
 	path := filepath.Join(base, "lazys3", "config.yaml")
@@ -88,7 +95,7 @@ func TestMissingDefaultWritesTemplateAndReturnsZero(t *testing.T) {
 	}
 	// The written template must itself parse to the zero config (all keys
 	// commented out).
-	if cfg2 := LoadFrom(path); cfg2 != (Config{}) {
+	if cfg2 := LoadFrom(path); !zeroConfig(cfg2) {
 		t.Errorf("written default file should load as zero config, got %+v", cfg2)
 	}
 }
@@ -108,7 +115,7 @@ func TestLegacyTomlSkipsTemplate(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	// The TOML file is no longer read (defaults win)…
-	if cfg != (Config{}) {
+	if !zeroConfig(cfg) {
 		t.Errorf("legacy toml must not be parsed, got %+v", cfg)
 	}
 	// …the caller gets a user-visible hint (the standard logger is
@@ -195,7 +202,7 @@ func TestMalformedFileReturnsDefaults(t *testing.T) {
 	if err := os.WriteFile(path, []byte("ui: [this is not yaml\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if cfg := LoadFrom(path); cfg != (Config{}) {
+	if cfg := LoadFrom(path); !zeroConfig(cfg) {
 		t.Errorf("malformed file should return zero config, got %+v", cfg)
 	}
 }
@@ -254,5 +261,75 @@ func TestStartDirExpandsTildeAndRelative(t *testing.T) {
 	}
 	if cfg := write(t, "."); cfg.Local.StartDir != wd {
 		t.Errorf(". should resolve to %q, got %q", wd, cfg.Local.StartDir)
+	}
+}
+
+// TestProfileStartLocations pins the per-profile startup schema: the bucket
+// is required, the prefix is normalized to a listing prefix, and malformed
+// entries are dropped instead of making profile selection jump somewhere
+// unintended.
+func TestProfileStartLocations(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	body := `
+profiles:
+  oss:
+    bucket: "my-bucket"
+    prefix: "logs/2026"
+  "  padded  ":
+    bucket: "  padded-bucket  "
+    prefix: "//a//b//"
+  root:
+    bucket: "root-bucket"
+  no-bucket:
+    prefix: "orphan/"
+  slash:
+    bucket: "bad/bucket"
+  spaces:
+    bucket: "bad bucket"
+`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := LoadFrom(path)
+	if len(cfg.Profiles) != 3 {
+		t.Fatalf("Profiles = %#v, want 3 valid entries", cfg.Profiles)
+	}
+	if got := cfg.Profiles["oss"]; got.Bucket != "my-bucket" || got.Prefix != "logs/2026/" {
+		t.Errorf("oss = %#v, want bucket my-bucket prefix logs/2026/", got)
+	}
+	if got := cfg.Profiles["  padded  "]; got.Bucket != "padded-bucket" || got.Prefix != "a/b/" {
+		t.Errorf("padded = %#v, want trimmed bucket and collapsed prefix", got)
+	}
+	if got := cfg.Profiles["root"]; got.Bucket != "root-bucket" || got.Prefix != "" {
+		t.Errorf("root = %#v, want bucket root with an empty prefix", got)
+	}
+	for _, name := range []string{"no-bucket", "slash", "spaces"} {
+		if _, ok := cfg.Profiles[name]; ok {
+			t.Errorf("invalid profiles entry %q should be dropped", name)
+		}
+	}
+}
+
+// TestDefaultTemplateDocumentsProfiles keeps the generated template and the
+// parser in sync: a new user must be able to discover the per-profile start
+// location, and the template must still load as the zero Config.
+func TestDefaultTemplateDocumentsProfiles(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", base)
+	if _, _, err := Load(""); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	path := filepath.Join(base, "lazys3", "config.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"profiles:", "bucket:", "prefix:", "ListBuckets"} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("default file should mention %q", want)
+		}
+	}
+	if cfg := LoadFrom(path); cfg.Profiles != nil {
+		t.Errorf("written default file should load with no profiles, got %#v", cfg.Profiles)
 	}
 }

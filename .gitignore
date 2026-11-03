@@ -33,3 +33,6 @@ go.work.sum
 
 lazys3 
 debug.log
+
+# local Go build/module caches used by the sandboxed dev environment
+.cache/

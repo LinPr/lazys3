@@ -336,14 +336,13 @@ func TestTableColumnsAligned(t *testing.T) {
 	opCol := cellCol(header, "op")
 	fileCol := cellCol(header, "file")
 	progCol := cellCol(header, "progress")
-	stCol := cellCol(header, "st")
 	noteCol := cellCol(header, "note")
 	// "st" appears inside other words; find the standalone header cell.
-	stCol = cellCol(header, " st ") + 1
+	stCol := cellCol(header, " st ") + 1
 	if stCol <= 0 {
 		t.Fatalf("header has no st column:\n%q", header)
 	}
-	if !(opCol < fileCol && fileCol < progCol && progCol < stCol && stCol < noteCol) {
+	if opCol >= fileCol || fileCol >= progCol || progCol >= stCol || stCol >= noteCol {
 		t.Fatalf("header order wrong (op=%d file=%d progress=%d st=%d note=%d):\n%q",
 			opCol, fileCol, progCol, stCol, noteCol, header)
 	}

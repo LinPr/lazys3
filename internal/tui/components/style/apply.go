@@ -7,8 +7,8 @@ import (
 	"github.com/LinPr/lazys3/internal/config"
 )
 
-// SelectedItemFg, when non-nil, overrides the highlighted-row foreground
-// (and its left border) in the list delegates. It is read at delegate
+// SelectedItemFg overrides the highlighted-row foreground (and its left
+// border) in the list delegates when non-nil. It is read at delegate
 // construction time, so Apply must run before the components are built.
 var SelectedItemFg color.Color
 

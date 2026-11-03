@@ -38,6 +38,17 @@ func NewProfile(name, endpointURL string) Profile {
 	return Profile{name: name, EndpointURL: endpointURL}
 }
 
+// NewProfileWithRegion constructs a profile entry with a region, as if it
+// had been loaded from the shared config. Parent-package tests use it to
+// pin the region plumbing into S3 options.
+func NewProfileWithRegion(name, endpointURL, region string) Profile {
+	return Profile{
+		name:        name,
+		EndpointURL: endpointURL,
+		config:      &config.SharedConfig{Profile: name, Region: region},
+	}
+}
+
 type ReadAwsConfigResult struct {
 	Profiles []Profile
 	Err      error

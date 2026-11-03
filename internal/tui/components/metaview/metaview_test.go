@@ -86,7 +86,7 @@ func TestObjectRowsRenderPopulatedFieldsAndOmitEmpties(t *testing.T) {
 		}
 	}
 	// User metadata lands under its own heading, sorted.
-	var heading, appIdx, ownerIdx int = -1, -1, -1
+	heading, appIdx, ownerIdx := -1, -1, -1
 	for i, r := range rows {
 		switch {
 		case r.Key == "" && r.Value == "User metadata":

@@ -16,7 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
-	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
@@ -64,8 +64,7 @@ func supportsTransferAcceleration(endpoint url.URL) bool {
 // S3Store is the storage.Storage implementation for S3.
 type S3Store struct {
 	client     *s3.Client
-	uploader   *manager.Uploader
-	downloader *manager.Downloader
+	tm         *transfermanager.Client
 	presigner  *s3.PresignClient
 
 	// dryRun, when true, makes mutating operations no-ops.
@@ -211,14 +210,12 @@ func NewS3Client(ctx context.Context, option S3Option) (*S3Store, error) {
 		}
 	})
 
-	uploader := manager.NewUploader(client)
-	downloader := manager.NewDownloader(client)
+	tm := transfermanager.New(client)
 	presigner := s3.NewPresignClient(client)
 
 	return &S3Store{
 		client:                 client,
-		uploader:               uploader,
-		downloader:             downloader,
+		tm:                     tm,
 		presigner:              presigner,
 		dryRun:                 option.DryRun,
 		useListObjectsV1:       option.UseListObjectsV1,

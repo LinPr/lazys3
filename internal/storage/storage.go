@@ -12,7 +12,6 @@ import (
 
 	fsstore "github.com/LinPr/lazys3/internal/storage/fs"
 	s3store "github.com/LinPr/lazys3/internal/storage/s3"
-	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
@@ -324,7 +323,7 @@ func (s *Storage) UploadFileWithProgress(ctx context.Context, fileName string, b
 // partSize <= 0 keeps the manager default (5 MiB). progress, when
 // non-nil, receives throttled byte progress with the file size as
 // totalBytes, and a final call at completion.
-func (s *Storage) UploadFileMultipart(ctx context.Context, fileName string, bucketName string, objectKey string, partSize int64, progress ProgressFunc) (*manager.UploadOutput, error) {
+func (s *Storage) UploadFileMultipart(ctx context.Context, fileName string, bucketName string, objectKey string, partSize int64, progress ProgressFunc) (*s3store.UploadResult, error) {
 	file, err := os.Open(fileName)
 	if err != nil {
 		return nil, err
@@ -346,14 +345,14 @@ func (s *Storage) UploadFileMultipart(ctx context.Context, fileName string, buck
 	return out, err
 }
 
-func (s *Storage) UploadFromStdin(ctx context.Context, bucketName string, objectKey string) (*manager.UploadOutput, error) {
+func (s *Storage) UploadFromStdin(ctx context.Context, bucketName string, objectKey string) (*s3store.UploadResult, error) {
 	return s.UploadFromStdinWithProgress(ctx, bucketName, objectKey, nil)
 }
 
 // UploadFromStdinWithProgress is UploadFromStdin with a byte-level
 // progress callback. The total size of a stdin stream is unknown, so
 // totalBytes is -1.
-func (s *Storage) UploadFromStdinWithProgress(ctx context.Context, bucketName string, objectKey string, progress ProgressFunc) (*manager.UploadOutput, error) {
+func (s *Storage) UploadFromStdinWithProgress(ctx context.Context, bucketName string, objectKey string, progress ProgressFunc) (*s3store.UploadResult, error) {
 	tracker := newProgressTracker(-1, progress)
 	stdinReader := &progressReader{r: &stdin{file: os.Stdin}, t: tracker}
 	out, err := s.remote.UploadObject(ctx, stdinReader, bucketName, objectKey)

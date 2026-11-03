@@ -124,7 +124,7 @@
 
 ## 安装
 
-需要 Go 1.25+。
+需要 Go 1.27+。
 
 ```sh
 go install github.com/LinPr/lazys3@latest

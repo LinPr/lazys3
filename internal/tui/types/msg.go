@@ -96,9 +96,9 @@ type InfoMsg struct {
 type TransferStats struct {
 	// Active upload/download rows (queued or running). The progress bar
 	// and the per-direction batch counts render while either is > 0.
-	UpActive   int
-	DownActive int
-	OtherActive int  // running/queued ops that are not upload or download but have Progress set
+	UpActive    int
+	DownActive  int
+	OtherActive int // running/queued ops that are not upload or download but have Progress set
 	// Byte progress for OtherActive ops (sync reports aggregate bytes via Progress.Report).
 	OtherDone  int64
 	OtherTotal int64

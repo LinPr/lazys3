@@ -4,7 +4,7 @@ How to build, test, and regenerate the demo GIF for lazys3. End-user docs live i
 
 ## Build from source
 
-Requires Go 1.25+. [Task](https://taskfile.dev) is optional but wraps the common commands.
+Requires Go 1.27+. [Task](https://taskfile.dev) is optional but wraps the common commands.
 
 ```sh
 git clone https://github.com/LinPr/lazys3.git

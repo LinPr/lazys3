@@ -350,8 +350,8 @@ func (m *Model) showLocalImage(path string) tea.Cmd {
 // runChafa executes chafa and returns its ANSI output.
 func runChafa(ctx context.Context, chafaPath, imgPath string, w, h int) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, chafaPath,
-		"-f", "symbols",  // Unicode block chars, works in any terminal
-		"-c", "full",     // 24-bit true color
+		"-f", "symbols", // Unicode block chars, works in any terminal
+		"-c", "full", // 24-bit true color
 		"--font-ratio", "1/2", // typical monospace cell aspect ratio
 		"--size", fmt.Sprintf("%dx%d", w, h),
 		imgPath,

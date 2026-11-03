@@ -124,7 +124,7 @@ Press `?` inside lazys3 to see this list as a scrollable overlay.
 
 ## Install
 
-Requires Go 1.25+.
+Requires Go 1.27+.
 
 ```sh
 go install github.com/LinPr/lazys3@latest

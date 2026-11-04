@@ -12,9 +12,13 @@ when your credentials are not allowed to list them.
 *Browsing, previewing without downloading, searching a whole bucket, and
 dual-pane local ⇄ remote — recorded from a real session.*
 
-```
+```sh
 go install github.com/LinPr/lazys3@latest
 ```
+
+No Go toolchain? Grab a static binary from
+[**Releases**](https://github.com/LinPr/lazys3/releases/latest) —
+Linux, macOS and Windows, amd64 and arm64.
 
 Works with AWS S3, Aliyun OSS, Huawei OBS, Tencent COS, MinIO, Ceph — anything
 speaking the S3 protocol.
@@ -207,18 +211,88 @@ Press `?` inside lazys3 to see this list as a scrollable overlay.
 
 ## Install
 
+### Prebuilt binary (no Go toolchain needed)
+
+Every [release](https://github.com/LinPr/lazys3/releases/latest) ships
+standalone binaries. They are built with `CGO_ENABLED=0`, so the Linux ones
+are statically linked and run on any distribution regardless of its glibc
+version.
+
+| OS | Architecture | Asset |
+|---|---|---|
+| Linux | x86-64 | `lazys3-linux-amd64` |
+| Linux | arm64 | `lazys3-linux-arm64` |
+| macOS | Apple Silicon | `lazys3-darwin-arm64` |
+| macOS | Intel | `lazys3-darwin-amd64` |
+| Windows | x86-64 | `lazys3-windows-amd64.exe` |
+| Windows | arm64 | `lazys3-windows-arm64.exe` |
+
+**Linux / macOS**
+
+```sh
+# 1. download the asset for your platform from the table above, plus checksums
+curl -fLO https://github.com/LinPr/lazys3/releases/latest/download/lazys3-linux-amd64
+curl -fLO https://github.com/LinPr/lazys3/releases/latest/download/checksums.txt
+
+# 2. verify (skip on macOS, which ships `shasum` instead — see below)
+sha256sum --check --ignore-missing checksums.txt
+
+# 3. install
+chmod +x lazys3-linux-amd64
+sudo mv lazys3-linux-amd64 /usr/local/bin/lazys3   # or: ~/.local/bin/
+lazys3 --version
+```
+
+Keep the downloaded file's original name until after verification:
+`checksums.txt` lists assets by name, so renaming first makes
+`--ignore-missing` skip every entry.
+
+On macOS the same check is `shasum -a 256 -c --ignore-missing checksums.txt`
+(`sha256sum` is a GNU coreutils tool and is not installed by default).
+
+The `latest/download/` URL always resolves to the newest release, so these
+commands keep working after upgrades.
+
+macOS refuses to run unsigned binaries downloaded from the internet. If you
+get *"cannot be opened because the developer cannot be verified"*, clear the
+quarantine flag once:
+
+```sh
+xattr -d com.apple.quarantine ./lazys3-darwin-arm64   # the file you downloaded
+```
+
+**Windows** — download the `.exe` for your architecture from the
+[releases page](https://github.com/LinPr/lazys3/releases/latest), rename it to
+`lazys3.exe`, and put it in a directory on `%PATH%` (for example
+`%LOCALAPPDATA%\Microsoft\WindowsApps`).
+
+### With Go
+
 Requires Go 1.27+.
 
 ```sh
 go install github.com/LinPr/lazys3@latest
 ```
 
-Or build from source:
+`go install` puts the binary in `$(go env GOPATH)/bin`, which is on `PATH`
+for most setups. `lazys3 --version` reports the installed tag (read from Go's
+build info, since `go install` cannot pass linker flags).
+
+### From source
 
 ```sh
 git clone https://github.com/LinPr/lazys3.git
 cd lazys3
 go build .          # or: task build
+```
+
+### Shell completion
+
+`lazys3` completes its flags for bash, zsh, fish and PowerShell:
+
+```sh
+lazys3 completion zsh > "${fpath[1]}/_lazys3"     # zsh
+lazys3 completion bash > /etc/bash_completion.d/lazys3
 ```
 
 ## Quick start

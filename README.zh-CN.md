@@ -9,9 +9,13 @@
 
 *浏览、免下载预览、全 bucket 搜索、本地 ⇄ 远端双栏 —— 由真实会话录制。*
 
-```
+```sh
 go install github.com/LinPr/lazys3@latest
 ```
+
+没有 Go 环境？直接从
+[**Releases**](https://github.com/LinPr/lazys3/releases/latest) 下载静态二进制 ——
+覆盖 Linux / macOS / Windows，amd64 与 arm64。
 
 支持 AWS S3、阿里云 OSS、华为云 OBS、腾讯云 COS、MinIO、Ceph 等任何
 兼容 S3 协议的服务。
@@ -203,18 +207,84 @@ go install github.com/LinPr/lazys3@latest
 
 ## 安装
 
+### 直接下载二进制（无需 Go 环境）
+
+每个 [Release](https://github.com/LinPr/lazys3/releases/latest) 都附带独立
+二进制。它们以 `CGO_ENABLED=0` 构建，因此 Linux 版本是**静态链接**的，在任何
+发行版上都能运行，不受 glibc 版本影响。
+
+| 系统 | 架构 | 文件名 |
+|---|---|---|
+| Linux | x86-64 | `lazys3-linux-amd64` |
+| Linux | arm64 | `lazys3-linux-arm64` |
+| macOS | Apple Silicon | `lazys3-darwin-arm64` |
+| macOS | Intel | `lazys3-darwin-amd64` |
+| Windows | x86-64 | `lazys3-windows-amd64.exe` |
+| Windows | arm64 | `lazys3-windows-arm64.exe` |
+
+**Linux / macOS**
+
+```sh
+# 1. 按上表下载对应平台的产物，以及校验和文件
+curl -fLO https://github.com/LinPr/lazys3/releases/latest/download/lazys3-linux-amd64
+curl -fLO https://github.com/LinPr/lazys3/releases/latest/download/checksums.txt
+
+# 2. 校验（macOS 用 shasum，见下）
+sha256sum --check --ignore-missing checksums.txt
+
+# 3. 安装
+chmod +x lazys3-linux-amd64
+sudo mv lazys3-linux-amd64 /usr/local/bin/lazys3   # 或：~/.local/bin/
+lazys3 --version
+```
+
+**校验前不要改文件名**：`checksums.txt` 是按原始文件名记录的，先改名会让
+`--ignore-missing` 把所有条目都跳过，等于没校验。
+
+macOS 上对应的命令是 `shasum -a 256 -c --ignore-missing checksums.txt`
+（`sha256sum` 属于 GNU coreutils，macOS 默认不带）。
+
+`latest/download/` 这个地址永远指向最新版本，以后升级也不用改命令。
+
+macOS 默认不允许运行从网络下载的未签名二进制。如果提示
+*"cannot be opened because the developer cannot be verified"*，
+执行一次下面的命令去掉隔离标记即可：
+
+```sh
+xattr -d com.apple.quarantine ./lazys3-darwin-arm64   # 换成你下载的文件名
+```
+
+**Windows** —— 在 [Releases 页面](https://github.com/LinPr/lazys3/releases/latest)
+下载对应架构的 `.exe`，重命名为 `lazys3.exe`，放到 `%PATH%` 中的目录
+（例如 `%LOCALAPPDATA%\Microsoft\WindowsApps`）。
+
+### 通过 Go 安装
+
 需要 Go 1.27+。
 
 ```sh
 go install github.com/LinPr/lazys3@latest
 ```
 
-或从源码构建：
+二进制会装到 `$(go env GOPATH)/bin`，多数环境已在该路径下。
+`lazys3 --version` 会显示安装的版本号（`go install` 无法传链接参数，因此这里
+从 Go 的 build info 读取）。
+
+### 从源码构建
 
 ```sh
 git clone https://github.com/LinPr/lazys3.git
 cd lazys3
 go build .          # 或：task build
+```
+
+### Shell 补全
+
+`lazys3` 支持 bash / zsh / fish / PowerShell 的命令行参数补全：
+
+```sh
+lazys3 completion zsh > "${fpath[1]}/_lazys3"     # zsh
+lazys3 completion bash > /etc/bash_completion.d/lazys3
 ```
 
 ## 快速上手

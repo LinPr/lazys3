@@ -45,7 +45,7 @@ func NewRootCmd() *cobra.Command {
 The optional positional argument opens a bucket/prefix directly at startup,
 without calling ListBuckets. It is useful for bucket-scoped credentials that
 cannot list buckets; --profile also skips the interactive profile picker.`,
-		Version: Version,
+		Version: resolvedVersion(),
 		Args:    cobra.MaximumNArgs(1),
 
 		Run: func(cmd *cobra.Command, args []string) {

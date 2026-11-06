@@ -3,6 +3,13 @@
 version: "3"
 silent: true
 
+# Every build is static: CGO_ENABLED=0 makes the net and os/user packages use
+# their pure-Go implementations instead of the libc-backed cgo ones, which is
+# what otherwise produces a binary that needs the build machine's glibc (a
+# released binary failed on older distributions with "GLIBC_2.34 not found").
+env:
+  CGO_ENABLED: '0'
+
 tasks:
   default:
     cmds:
@@ -13,9 +20,56 @@ tasks:
       - build
 
   build:
+    desc: Build a statically linked binary
     cmds:
-      - go build -ldflags "-X github.com/LinPr/lazys3/cmd.Version=$(git describe --tags --always --dirty)" .
-    desc: Build binary
+      # -trimpath keeps the build path out of the binary (reproducible, and no
+      # local checkout paths in stack traces).
+      # CGO_ENABLED is set inline as well as in the global env: an exported
+      # CGO_ENABLED=1 in the caller's shell wins over a task-level env var, and
+      # that is how a dynamic release slipped through before.
+      - CGO_ENABLED=0 go build -trimpath -ldflags "-X github.com/LinPr/lazys3/cmd.Version=$(git describe --tags --always --dirty)" .
+      # Verify instead of assuming: CGO can be re-enabled by an env var in the
+      # caller's shell, and a dynamically linked binary only fails much later,
+      # on somebody else's distribution.
+      - |
+        if [ "$(go env GOOS)" = "linux" ]; then
+          if ! file lazys3 | grep -q 'statically linked'; then
+            echo "error: lazys3 is not statically linked" >&2
+            file lazys3 >&2
+            exit 1
+          fi
+        fi
+
+  build-all:
+    desc: Cross-compile every release target into dist/ (all static)
+    cmds:
+      - mkdir -p dist
+      - |
+        VERSION="$(git describe --tags --always --dirty)"
+        for target in \
+          linux/amd64 linux/arm64 \
+          darwin/amd64 darwin/arm64 \
+          windows/amd64 windows/arm64; do
+          GOOS="${target%/*}"; GOARCH="${target#*/}"
+          out="dist/lazys3-${GOOS}-${GOARCH}"
+          [ "$GOOS" = "windows" ] && out="${out}.exe"
+          echo "building ${out}"
+          CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build -trimpath \
+            -ldflags "-s -w -X github.com/LinPr/lazys3/cmd.Version=${VERSION}" -o "$out" . || exit 1
+        done
+      # Only the Linux artifacts can be validated here: `file` reports
+      # linux as static/dynamic, while Mach-O and PE artifacts get their
+      # libraries checked by CI on their native runners (see release.yml).
+      - |
+        fail=0
+        for bin in dist/*linux*; do
+          if ! file "$bin" | grep -q 'statically linked'; then
+            echo "error: $bin is not statically linked" >&2
+            file "$bin" >&2
+            fail=1
+          fi
+        done
+        exit $fail
 
   lint:
     desc: Run base linters

@@ -36,3 +36,6 @@ debug.log
 
 # Python bytecode from the demo recorder
 __pycache__/
+
+# cross-compiled release artifacts from `task build-all`
+dist/

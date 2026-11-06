@@ -55,16 +55,39 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         run: |
           VERSION="${GITHUB_REF#refs/tags/}"
-          go build \
+          # -trimpath: no runner checkout paths baked into the binary, so the
+          # same tag produces byte-identical output on any machine.
+          go build -trimpath \
             -ldflags "-s -w -X github.com/LinPr/lazys3/cmd.Version=${VERSION}" \
             -o "${{ matrix.asset }}" .
-          # Fail the build loudly if the binary is not static: that is the
-          # regression this job exists to prevent.
-          if [ "${{ matrix.goos }}" = "linux" ]; then
-            file "${{ matrix.asset }}"
-            file "${{ matrix.asset }}" | grep -q 'statically linked' || \
-              { echo "::error::${{ matrix.asset }} is not statically linked"; exit 1; }
-          fi
+
+          # Verify the artifact instead of trusting the env var. A dynamic
+          # binary only fails much later, on a user's older distribution
+          # ("GLIBC_2.34 not found"), which is exactly the regression this
+          # job exists to prevent.
+          file "${{ matrix.asset }}"
+          case "${{ matrix.goos }}" in
+            linux)
+              file "${{ matrix.asset }}" | grep -q 'statically linked' || \
+                { echo "::error::${{ matrix.asset }} links against libc"; exit 1; }
+              ;;
+            darwin)
+              # "Static" is not achievable on macOS: the platform always links
+              # the system libraries (libSystem, and - for a pure-Go build
+              # too - libresolv plus the CoreFoundation/Security frameworks,
+              # which every Mac ships). What must never appear is a
+              # third-party dylib, so allow only /usr/lib and
+              # /System/Library paths.
+              otool -L "${{ matrix.asset }}"
+              bad=$(otool -L "${{ matrix.asset }}" | tail -n +2 | awk '{print $1}' \
+                    | grep -Ev '^(/usr/lib/|/System/Library/|@rpath/|@loader_path/)' || true)
+              if [ -n "$bad" ]; then
+                echo "::error::${{ matrix.asset }} links non-system libraries:"
+                echo "$bad"
+                exit 1
+              fi
+              ;;
+          esac
 
       - name: Upload ${{ matrix.asset }}
         uses: actions/upload-artifact@v4

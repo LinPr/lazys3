@@ -12,6 +12,19 @@ cd lazys3
 go build .          # or: task build
 ```
 
+Builds are **static** (`CGO_ENABLED=0`). Without it, the `net` and `os/user`
+packages use their cgo implementations and the binary picks up the build
+machine's glibc — a release built that way once failed on older
+distributions with `GLIBC_2.34 not found`. `task build` sets it inline *and*
+asserts the result is statically linked, so an exported `CGO_ENABLED=1` in
+your shell cannot silently reintroduce the dependency.
+
+`task build-all` cross-compiles all six release targets into `dist/` and
+verifies the Linux ones. The macOS binary is never fully static — it always
+links Apple's own `libSystem`, `libresolv` and the CoreFoundation/Security
+frameworks, which every Mac ships; CI checks that no third-party dylib
+sneaks in.
+
 ## Task targets
 
 Defined in `Taskfile.yaml`:
@@ -19,7 +32,8 @@ Defined in `Taskfile.yaml`:
 | Target | What it does |
 |---|---|
 | `task` (default) | build, then run `./lazys3 --debug` |
-| `task build` | `go build .` |
+| `task build` | static build of `./lazys3` (`CGO_ENABLED=0`, verified) |
+| `task build-all` | cross-compile all six release targets into `dist/`, verify static |
 | `task lint` / `task lint-fix` | `golangci-lint` with `.golangci.yml` (optionally with `--fix`) |
 | `task fmt` | `go fmt ./...` |
 | `task test` / `task test-unit` | unit tests (excludes the e2e package) |

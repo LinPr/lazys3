@@ -57,9 +57,10 @@ tasks:
           CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build -trimpath \
             -ldflags "-s -w -X github.com/LinPr/lazys3/cmd.Version=${VERSION}" -o "$out" . || exit 1
         done
-      # Only the Linux artifacts can be validated here: `file` reports
-      # linux as static/dynamic, while Mach-O and PE artifacts get their
-      # libraries checked by CI on their native runners (see release.yml).
+      # Linux: must be fully static. macOS: never fully static (the platform
+      # requires its system libraries), so check that nothing outside
+      # /usr/lib and /System/Library is linked. PE artifacts are left to CI,
+      # which can inspect them natively.
       - |
         fail=0
         for bin in dist/*linux*; do
@@ -70,6 +71,7 @@ tasks:
           fi
         done
         exit $fail
+      - python3 scripts/check-macho-dylibs.py dist/lazys3-darwin-*
 
   lint:
     desc: Run base linters

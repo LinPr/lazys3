@@ -73,19 +73,12 @@ jobs:
               ;;
             darwin)
               # "Static" is not achievable on macOS: the platform always links
-              # the system libraries (libSystem, and - for a pure-Go build
-              # too - libresolv plus the CoreFoundation/Security frameworks,
-              # which every Mac ships). What must never appear is a
-              # third-party dylib, so allow only /usr/lib and
-              # /System/Library paths.
-              otool -L "${{ matrix.asset }}"
-              bad=$(otool -L "${{ matrix.asset }}" | tail -n +2 | awk '{print $1}' \
-                    | grep -Ev '^(/usr/lib/|/System/Library/|@rpath/|@loader_path/)' || true)
-              if [ -n "$bad" ]; then
-                echo "::error::${{ matrix.asset }} links non-system libraries:"
-                echo "$bad"
-                exit 1
-              fi
+              # its own system libraries (libSystem, plus libresolv and the
+              # CoreFoundation/Security frameworks even for a pure-Go build).
+              # What must never appear is a third-party dylib — the check
+              # script reads the Mach-O load commands because `otool` is
+              # macOS-only and this job runs on Linux.
+              python3 scripts/check-macho-dylibs.py "${{ matrix.asset }}"
               ;;
           esac
 
